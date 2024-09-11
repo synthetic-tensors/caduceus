@@ -214,6 +214,18 @@ class SequenceModule(nn.Module, HyperparametersMixin):
         x_t, *_ = self.decoder.step(x_t, state=state)
         return x_t
 
+    def _shared_step(self, batch, batch_idx, prefix="train"):
+        """Shared step logic between training, validation, and test"""
+        self._process_state(batch, batch_idx, training=(prefix == "train"))
+        x, y, w = self.forward(batch)
+
+        # Loss
+        if prefix == 'train':
+            loss = self.loss(x, y, **w)
+        else:
+            loss = self.loss_val(x, y, **w)
+        return loss
+
     def train_dataloader(self):
         return self.dataset.train_dataloader(**self.hparams.loader)
 
