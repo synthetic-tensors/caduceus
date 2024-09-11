@@ -10,6 +10,8 @@ from src.tasks import decoders, encoders, tasks
 from src.utils import registry
 from src.dataloaders import SequenceDataset  # TODO make registry
 
+from pytorch_lightning.core.mixins import HyperparametersMixin
+
 from torch import nn
 log = src.utils.train.get_logger(__name__)
 
@@ -18,7 +20,7 @@ import torch.backends
 
 
 
-class SequenceModule(nn.Module):
+class SequenceModule(nn.Module, HyperparametersMixin):
     def __init__(self, config):
         # Disable profiling executor. This reduces memory and increases speed.
         try:
