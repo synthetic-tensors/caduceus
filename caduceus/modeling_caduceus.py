@@ -7,7 +7,8 @@ from functools import partial
 from typing import Optional, Tuple, Union
 
 import torch
-from mamba_ssm.modules.mamba2_simple import Mamba2Simple as Mamba
+#from mamba_ssm.modules.mamba2_simple import Mamba2Simple as Mamba
+from mamba_ssm.modules.mamba2 import Mamba2 as Mamba
 from mamba_ssm.modules.block import Block
 from torch import nn
 from torch.nn import functional as F
