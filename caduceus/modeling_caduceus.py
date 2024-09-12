@@ -7,16 +7,14 @@ from functools import partial
 from typing import Optional, Tuple, Union
 
 import torch
-from mamba_ssm.modules.mamba_simple import Mamba, Block
+from mamba_ssm.modules.mamba2_simple import Mamba2Simple as Mamba
+from mamba_ssm.modules.block import Block
 from torch import nn
 from torch.nn import functional as F
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithNoAttention, MaskedLMOutput, SequenceClassifierOutput
 
-try:
-    from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
-except ImportError:
-    RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
+from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
 
 from .configuration_caduceus import CaduceusConfig
 from .modeling_rcps import RCPSAddNormWrapper, RCPSEmbedding, RCPSLMHead, RCPSMambaBlock
@@ -106,11 +104,11 @@ class BiMambaWrapper(nn.Module):
         hidden_states: (B, L, D)
         Returns: same shape as hidden_states
         """
-        out = self.mamba_fwd(hidden_states, inference_params=inference_params)
+        out = self.mamba_fwd(hidden_states )#, inference_params=inference_params)
         if self.bidirectional:
             out_rev = self.mamba_rev(
                 hidden_states.flip(dims=(1,)),  # Flip along the sequence length dimension
-                inference_params=inference_params
+                #inference_params=inference_params
             ).flip(dims=(1,))  # Flip back for combining with forward hidden states
             if self.bidirectional_strategy == "add":
                 out = out + out_rev
