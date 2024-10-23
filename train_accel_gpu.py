@@ -130,10 +130,11 @@ def main(config: OmegaConf):
     # Start model training and defining the training loop
     model.train()
     world_size = torch.cuda.device_count()
+    print(world_size)
     for epoch in range(0,1):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
-            loss = model._shared_step(batch, batch_idx, prefix="train")
+            loss = model.module._shared_step(batch, batch_idx, prefix="train")
             #batch = move_to(batch, device)
             accelerator.backward(loss)
             optimizer.step()
