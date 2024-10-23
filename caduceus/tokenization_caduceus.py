@@ -65,6 +65,8 @@ class CaduceusTokenizer(PreTrainedTokenizer):
             complement_id = self._vocab_str_to_int[complement_map[k]] if k in complement_map.keys() else v
             self._complement_map[self._vocab_str_to_int[k]] = complement_id
 
+        print(kwargs)
+
         super().__init__(
             bos_token=bos_token,
             eos_token=eos_token,
@@ -76,7 +78,7 @@ class CaduceusTokenizer(PreTrainedTokenizer):
             add_prefix_space=add_prefix_space,
             model_max_length=model_max_length,
             padding_side=padding_side,
-            **kwargs,
+            #**kwargs,
         )
 
     @property
