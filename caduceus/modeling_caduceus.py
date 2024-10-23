@@ -2,6 +2,7 @@
 
 """
 
+import inspect
 import math
 from functools import partial
 from typing import Optional, Tuple, Union
@@ -53,13 +54,24 @@ def create_block(
         nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
     )
     block_cls = RCPSMambaBlock if rcps else Block
-    block = block_cls(
-        d_model,
-        mixer_cls,
-        norm_cls=norm_cls,
-        fused_add_norm=fused_add_norm,
-        residual_in_fp32=residual_in_fp32,
-    )
+    # mambav2 compatibility
+    if "mlp_cls" in inspect.signature(block_cls.__init__).parameters:
+        block = block_cls(
+            d_model,
+            mixer_cls,
+            mlp_cls=nn.Identity,
+            norm_cls=norm_cls,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+        )
+    else:
+        block = block_cls(
+            d_model,
+            mixer_cls,
+            norm_cls=norm_cls,
+            fused_add_norm=fused_add_norm,
+            residual_in_fp32=residual_in_fp32,
+        )
     block.layer_idx = layer_idx
     return block
 
