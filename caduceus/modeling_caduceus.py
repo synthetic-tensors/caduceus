@@ -36,6 +36,7 @@ def create_block(
         rcps=False,
         device=None,
         dtype=None,
+        context_parallel=False,
 ):
     """Create Caduceus block.
 
@@ -63,6 +64,7 @@ def create_block(
             norm_cls=norm_cls,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
+            context_parallel=context_parallel
         )
     else:
         block = block_cls(
@@ -71,6 +73,7 @@ def create_block(
             norm_cls=norm_cls,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
+            context_parallel=context_parallel
         )
     block.layer_idx = layer_idx
     return block
@@ -161,9 +164,10 @@ class CaduceusMixerModel(nn.Module):
             config: CaduceusConfig,
             device=None,
             dtype=None,
+            context_parallel=False
     ) -> None:
         super().__init__()
-        factory_kwargs = {"device": device, "dtype": dtype}
+        factory_kwargs = {"device": device, "dtype": dtype, "context_parallel": context_parallel}
 
         self.fused_add_norm = config.fused_add_norm
         self.rcps = config.rcps
