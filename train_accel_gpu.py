@@ -2,6 +2,7 @@ import logging
 from time import gmtime, strftime
 from tqdm.auto import tqdm
 import torch
+import torch.distributed as dist
 #from utils.training import count_parameters #, move_to
 import hydra
 from accelerate import Accelerator
@@ -30,6 +31,7 @@ def main(config: OmegaConf):
     if config.train.seed is not None:
         set_seed(config.train.seed)
     model = SequenceModule(config)
+    print(model)
     train_dl, eval_dl = model.train_dataloader(), model.val_dataloader()
 
     #config.n_params_emb, config.n_params_nonemb = count_parameters(model, print_summary=False)
@@ -134,8 +136,10 @@ def main(config: OmegaConf):
     for epoch in range(0,1):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
+            print(f'backward on {dist.get_rank()}')
             loss = model.module._shared_step(batch, batch_idx, prefix="train")
             #batch = move_to(batch, device)
+            print(f'forward on {dist.get_rank()}')
             accelerator.backward(loss)
             optimizer.step()
             lr_scheduler.step()

@@ -16,6 +16,8 @@ from torch.nn import functional as F
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithNoAttention, MaskedLMOutput, SequenceClassifierOutput
 
+import torch.distributed as dist
+
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
 
 from .configuration_caduceus import CaduceusConfig
@@ -37,6 +39,7 @@ def create_block(
         device=None,
         dtype=None,
         context_parallel=False,
+        padding=3,
 ):
     """Create Caduceus block.
 
@@ -64,7 +67,8 @@ def create_block(
             norm_cls=norm_cls,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
-            context_parallel=context_parallel
+            context_parallel=context_parallel,
+            padding=padding
         )
     else:
         block = block_cls(
@@ -73,7 +77,8 @@ def create_block(
             norm_cls=norm_cls,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
-            context_parallel=context_parallel
+            context_parallel=context_parallel,
+            padding=padding
         )
     block.layer_idx = layer_idx
     return block
@@ -167,7 +172,7 @@ class CaduceusMixerModel(nn.Module):
             context_parallel=False
     ) -> None:
         super().__init__()
-        factory_kwargs = {"device": device, "dtype": dtype, "context_parallel": context_parallel}
+        factory_kwargs = {"device": device, "dtype": dtype}
 
         self.fused_add_norm = config.fused_add_norm
         self.rcps = config.rcps
@@ -198,6 +203,8 @@ class CaduceusMixerModel(nn.Module):
                     bidirectional_strategy=config.bidirectional_strategy,
                     bidirectional_weight_tie=config.bidirectional_weight_tie,
                     rcps=config.rcps,
+                    context_parallel=config.context_parallel,
+                    padding=config.padding,
                     **factory_kwargs,
                 )
                 for i in range(config.n_layer)
@@ -216,6 +223,9 @@ class CaduceusMixerModel(nn.Module):
             hidden_states = inputs_embeds
         else:
             hidden_states = self.embeddings(input_ids)
+        
+        print(dist.get_rank(),dist.get_world_size())
+        print(dist.is_initialized())
 
         residual = None
         for layer in self.layers:
@@ -339,7 +349,8 @@ class CaduceusPreTrainedModel(PreTrainedModel):
 
 class Caduceus(CaduceusPreTrainedModel):
     """Caduceus model that can be instantiated using HF patterns."""
-    def __init__(self, config: CaduceusConfig, device=None, dtype=None, **kwargs):
+    def __init__(self, config: CaduceusConfig, device=None, dtype=None, context_parallel=False,
+            **kwargs):
         super().__init__(config)
 
         if config.rcps:
@@ -353,7 +364,7 @@ class Caduceus(CaduceusPreTrainedModel):
                 config.complement_map[i] = i
 
         self.config = config
-        factory_kwargs = {"device": device, "dtype": dtype}
+        factory_kwargs = {"device": device, "dtype": dtype, "context_parallel": context_parallel}
         self.backbone = CaduceusMixerModel(config, **factory_kwargs, **kwargs)
 
     def forward(
