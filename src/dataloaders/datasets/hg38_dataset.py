@@ -226,7 +226,7 @@ class HG38Dataset(torch.utils.data.Dataset):
             seq_per_gpu = length // num_gpus
             print('running on ', rank, ' with ', seq_per_gpu)
             sequence = rearrange(seq, '(n j) -> n j', n = num_gpus)[rank].contiguous()
-
+            print('Final sequence length for',rank,sequence.shape():w)
         if self.mlm:
             data, target = mlm_getitem(
                 seq,
