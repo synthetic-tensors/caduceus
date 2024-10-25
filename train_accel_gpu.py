@@ -136,11 +136,12 @@ def main(config: OmegaConf):
     for epoch in range(0,1):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
-            print(f'backward on {dist.get_rank()}')
+            print(f'forward on {dist.get_rank()}')
             loss = model.module._shared_step(batch, batch_idx, prefix="train")
             #batch = move_to(batch, device)
-            print(f'forward on {dist.get_rank()}')
+            print(f'backward on {dist.get_rank()}')
             accelerator.backward(loss)
+            print(f'optimize on {dist.get_rank()}')
             optimizer.step()
             lr_scheduler.step()
             if accelerator.is_main_process:
