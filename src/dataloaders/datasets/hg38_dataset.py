@@ -217,10 +217,23 @@ class HG38Dataset(torch.utils.data.Dataset):
         # replace N token with a pad token, so we can ignore it in the loss
         seq = self.replace_value(seq, self.tokenizer._vocab_str_to_int["N"], self.tokenizer.pad_token_id)
 
+        if self.mlm:
+            data, target = mlm_getitem(
+                seq,
+                mlm_probability=self.mlm_probability,
+                contains_eos=self.add_eos,
+                tokenizer=self.tokenizer,
+                eligible_replacements=self.eligible_replacements,
+                seed=idx, #For repro in context parallel with multiple GPUs
+            )
+
+        else:
+            data = seq[:-1].clone()
+            target = seq[1:].clone()
         if self.context_parallel:
             #FIXME the sequence can be obtained directly from the indices by modifying the preprocess step before this
             # With the FASTA Interval function
-            length = seq.shape[0]
+            length = data.shape[0]
             #print('sequence length: ', seq.shape[0], 'Max length',MAX_ALLOWED_LENGTH)
             num_gpus = dist.get_world_size()
             rank = dist.get_rank()
@@ -230,19 +243,8 @@ class HG38Dataset(torch.utils.data.Dataset):
             ileft, iright = rank * seq_per_gpu, (rank + 1) * seq_per_gpu if rank != num_gpus-1 else length
             #seq = rearrange(seq, '(n j) -> n j', n = num_gpus)[rank].contiguous()
             
-            seq = seq[ileft:iright].contiguous()
+            data = data[ileft:iright].contiguous()
+            target = target[ileft:iright].contiguous()
             #print('Final sequence length for',rank,seq.shape)
-        if self.mlm:
-            data, target = mlm_getitem(
-                seq,
-                mlm_probability=self.mlm_probability,
-                contains_eos=self.add_eos,
-                tokenizer=self.tokenizer,
-                eligible_replacements=self.eligible_replacements,
-            )
-
-        else:
-            data = seq[:-1].clone()
-            target = seq[1:].clone()
 
         return data, target

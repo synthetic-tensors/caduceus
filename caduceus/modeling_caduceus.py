@@ -236,6 +236,8 @@ class CaduceusMixerModel(nn.Module):
                 hidden_states, residual, inference_params=None
             )
 
+            #print(f'{dist.get_rank() = } - {layer.layer_idx = } - {hidden_states.shape = }')
+            #print(f'{dist.get_rank() = } - {layer.layer_idx = } - {residual.shape = }')
         if not self.fused_add_norm:
             if self.rcps:
                 # Set prenorm=False here since we don't need the residual

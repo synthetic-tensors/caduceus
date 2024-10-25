@@ -1,12 +1,15 @@
 import torch
 
 
-def mlm_getitem(seq, mlm_probability=0.15, contains_eos=False, tokenizer=None, eligible_replacements=None):
+def mlm_getitem(seq, mlm_probability=0.15, contains_eos=False, tokenizer=None, eligible_replacements=None, seed=None):
     """Helper method for creating MLM input / target.
 
     Adapted from:
     https://github.com/huggingface/transformers/blob/14666775a296a76c88e1aa686a9547f393d322e2/src/transformers/data/data_collator.py#L751
     """
+    if seed is not None:
+        torch.manual_seed(seed) #Added for context parallel to make reproducible
+
     data = seq[:-1].clone() if contains_eos else seq.clone()  # remove eos, if applicable
     target = data.clone()
     # We sample a few tokens in each sequence for MLM training (with probability `self.mlm_probability`)
