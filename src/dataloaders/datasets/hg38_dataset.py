@@ -112,6 +112,8 @@ class HG38Dataset(torch.utils.data.Dataset):
             context_parallel=False,
     ):
         self.context_parallel=context_parallel
+        print(mlm, 'MLM CONTEXT')
+        print(context_parallel,'CONTEXT PARALLEL')
         self.mlm = mlm
         self.mlm_probability = mlm_probability
         if self.mlm and self.mlm_probability <= 0.0:
@@ -219,14 +221,17 @@ class HG38Dataset(torch.utils.data.Dataset):
             #FIXME the sequence can be obtained directly from the indices by modifying the preprocess step before this
             # With the FASTA Interval function
             length = seq.shape[0]
-            print(seq.shape[0])
+            #print('sequence length: ', seq.shape[0], 'Max length',MAX_ALLOWED_LENGTH)
             num_gpus = dist.get_world_size()
             rank = dist.get_rank()
-            assert length % num_gpus == num_gpus, "Not the right sequence shape for world"
             seq_per_gpu = length // num_gpus
-            print('running on ', rank, ' with ', seq_per_gpu)
-            sequence = rearrange(seq, '(n j) -> n j', n = num_gpus)[rank].contiguous()
-            print('Final sequence length for',rank,sequence.shape():w)
+            assert length % num_gpus < 2, "Not the right sequence shape for world"
+            #print('running on ', rank, ' with ', seq_per_gpu)
+            ileft, iright = rank * seq_per_gpu, (rank + 1) * seq_per_gpu if rank != num_gpus-1 else length
+            #seq = rearrange(seq, '(n j) -> n j', n = num_gpus)[rank].contiguous()
+            
+            seq = seq[ileft:iright].contiguous()
+            #print('Final sequence length for',rank,seq.shape)
         if self.mlm:
             data, target = mlm_getitem(
                 seq,

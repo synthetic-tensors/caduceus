@@ -34,6 +34,7 @@ dataset:
   num_workers: 12
   use_fixed_len_val: false  # placing a fixed length val here, but it's really the test
   mlm: false
+  context_parallel: false
   mlm_probability: 0.0
 
 scheduler:

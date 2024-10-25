@@ -224,15 +224,14 @@ class CaduceusMixerModel(nn.Module):
         else:
             hidden_states = self.embeddings(input_ids)
         
-        print(dist.get_rank(),dist.get_world_size())
-        print(dist.is_initialized())
+        #print(dist.get_rank(),dist.get_world_size())
+        #print(dist.is_initialized())
 
         residual = None
         for layer in self.layers:
             if output_hidden_states:
                 all_hidden_states.append(hidden_states)
             # TODO: Add support for gradient checkpointing
-            print(dist.get_rank(),"running layer",layer.layer_idx)
             hidden_states, residual = layer(
                 hidden_states, residual, inference_params=None
             )

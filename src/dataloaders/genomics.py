@@ -50,7 +50,9 @@ class HG38(SequenceDataset):
                  fault_tolerant=False, ddp=False,
                  fast_forward_epochs=None, fast_forward_batches=None,
                  mlm=False, mlm_probability=0.15,
+                 context_parallel=False,
                  *args, **kwargs):
+        self.context_parallel = context_parallel
         self.dataset_config_name = dataset_config_name
         self.tokenizer_name = tokenizer_name
         self.d_output = d_output
@@ -142,7 +144,8 @@ class HG38(SequenceDataset):
                         rc_aug=self.rc_aug,
                         return_augs=False,
                         mlm=self.mlm,
-                        mlm_probability=self.mlm_probability, )
+                        mlm_probability=self.mlm_probability,
+                        context_parallel=self.context_parallel)
             for split, max_len in
             zip(["train", "valid", "test"], [self.max_length, self.max_length_val, self.max_length_test])
         ]

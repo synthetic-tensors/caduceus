@@ -37,7 +37,6 @@ class SequenceModule(nn.Module, HyperparametersMixin):
         self.dataset = SequenceDataset.registry[self.hparams.dataset._name_](
             **self.hparams.dataset
         )
-
         # Check hparams
         self._check_config()
 
