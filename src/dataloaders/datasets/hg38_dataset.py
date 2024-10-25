@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import torch.distributed as dist
+from einops import rearrange
 from pyfaidx import Fasta
 
 from src.dataloaders.utils.mlm import mlm_getitem
 from src.dataloaders.utils.rc import coin_flip, string_reverse_complement
 
-MAX_ALLOWED_LENGTH = 2 ** 20
+MAX_ALLOWED_LENGTH = 2 ** 26
 
 
 class FastaInterval:
@@ -107,7 +109,9 @@ class HG38Dataset(torch.utils.data.Dataset):
             return_seq_indices=False,
             rc_aug=False,
             return_augs=False,
+            context_parallel=False,
     ):
+        self.context_parallel=context_parallel
         self.mlm = mlm
         self.mlm_probability = mlm_probability
         if self.mlm and self.mlm_probability <= 0.0:
@@ -210,6 +214,18 @@ class HG38Dataset(torch.utils.data.Dataset):
 
         # replace N token with a pad token, so we can ignore it in the loss
         seq = self.replace_value(seq, self.tokenizer._vocab_str_to_int["N"], self.tokenizer.pad_token_id)
+
+        if self.context_parallel:
+            #FIXME the sequence can be obtained directly from the indices by modifying the preprocess step before this
+            # With the FASTA Interval function
+            length = seq.shape[0]
+            print(seq.shape[0])
+            num_gpus = dist.get_world_size()
+            rank = dist.get_rank()
+            assert length % num_gpus == num_gpus, "Not the right sequence shape for world"
+            seq_per_gpu = length // num_gpus
+            print('running on ', rank, ' with ', seq_per_gpu)
+            sequence = rearrange(seq, '(n j) -> n j', n = num_gpus)[rank].contiguous()
 
         if self.mlm:
             data, target = mlm_getitem(
