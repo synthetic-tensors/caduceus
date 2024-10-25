@@ -11,6 +11,7 @@ from accelerate.utils import set_seed
 from accel_model import SequenceModule
 from src.utils import registry
 import src.utils as utils
+from src.utils.train import get_grad_norm, get_param_norm
 from src.utils.optim_groups import add_optimizer_hooks
 from omegaconf import OmegaConf
 
@@ -39,8 +40,8 @@ def main(config: OmegaConf):
     # Initialise your wandb run, passing wandb parameters and any config information
     init_kwargs={"wandb": {"entity": "josiahbjorgaard"}}
     accelerator.init_trackers(
-        project_name="Caduceus",
-        config=config, #dict(config),
+        project_name="CaduceusCP",
+        config=dict(config),
         init_kwargs=init_kwargs
         )
 
@@ -137,7 +138,10 @@ def main(config: OmegaConf):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
             #print(f'forward on {dist.get_rank()}')
-            loss = model.module._shared_step(batch, batch_idx, prefix="train")
+            if world_size > 1:
+                loss = model.module._shared_step(batch, batch_idx, prefix="train")
+            else:
+                loss = model._shared_step(batch, batch_idx, prefix="train")
             #batch = move_to(batch, device)
             #print(f'backward on {dist.get_rank()}')
             accelerator.backward(loss)
@@ -146,6 +150,7 @@ def main(config: OmegaConf):
             lr_scheduler.step()
             if accelerator.is_main_process:
                 progress_bar.update(world_size)
+            accelerator.log({'loss':loss, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})
     logger.info("End training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     accelerator.end_training()
 
