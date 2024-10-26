@@ -30,7 +30,7 @@ def main(config: OmegaConf):
     utils.train.print_config(config, resolve=True)
 
     if config.train.seed is not None:
-        set_seed(config.train.seed)
+        set_seed(42) #config.train.seed)
     model = SequenceModule(config)
     print(model)
     train_dl, eval_dl = model.train_dataloader(), model.val_dataloader()
@@ -58,7 +58,7 @@ def main(config: OmegaConf):
     params = [p for p in all_params if not hasattr(p, "_optim")]
     optimizer = utils.instantiate(registry.optimizer, model.hparams.optimizer, params)
     del model.hparams.optimizer._name_
-
+    """
     # Add parameters with special hyperparameters
     hps = [getattr(p, "_optim") for p in all_params if hasattr(p, "_optim")]
     hps = [
@@ -108,7 +108,7 @@ def main(config: OmegaConf):
         for layer_id, group in layer_wise_groups.items():
             optimizer.add_param_group(group)
 
-    # Print optimizer info for debugging
+     Print optimizer info for debugging
     keys = set([k for hp in hps for k in hp.keys()])  # Special hparams
     utils.train.log_optimizer(logger, optimizer, keys)
 
@@ -122,11 +122,13 @@ def main(config: OmegaConf):
         "name": "trainer/lr",  # default is e.g. 'lr-AdamW'
     }
 
+    """
     logger.info("Start training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
-
-    model, optimizer, train_dl, eval_dl, lr_scheduler = accelerator.prepare(
-         model, optimizer, train_dl, eval_dl, lr_scheduler
-         )
+    #model, optimizer, train_dl, eval_dl, lr_scheduler = accelerator.prepare(
+    #     model, optimizer, train_dl, eval_dl, lr_scheduler
+    #     )
+    model,optimizer,train_dl,eval_dl = accelerator.prepare(model,optimizer,train_dl,eval_dl)
+    
     if accelerator.is_main_process:
         progress_bar = tqdm(range(num_training_steps), initial = 0 * len(train_dl))
 
@@ -134,6 +136,7 @@ def main(config: OmegaConf):
     model.train()
     world_size = torch.cuda.device_count()
     print(world_size)
+    print(train_dl.sampler)
     for epoch in range(0,1):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
@@ -146,8 +149,14 @@ def main(config: OmegaConf):
             #print(f'backward on {dist.get_rank()}')
             accelerator.backward(loss)
             #print(f'optimize on {dist.get_rank()}')
+            rank = dist.get_rank() if dist.is_initialized() else 0
+            #print(dist.get_rank(), 'writing files')
+            torch.save(batch[0],f'input_{rank}.pt')
+            torch.save(batch[1],f'target_{rank}.pt')
+            torch.save({x[0]:x[1].grad for x in model.named_parameters()}, f"grad_dict_{rank}.pt")
+            exit()
             optimizer.step()
-            lr_scheduler.step()
+            #lr_scheduler.step()
             if accelerator.is_main_process:
                 progress_bar.update(world_size)
             accelerator.log({'loss':loss, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})

@@ -19,6 +19,19 @@ log = src.utils.train.get_logger(__name__)
 import torch.backends
 
 
+from torch.utils.data import DistributedSampler
+
+"""
+class CustomSampler(DistributedSampler):
+    def __init__(self, dataset, num_replicas=None, rank=None, shuffle=True):
+        super().__init__(dataset, num_replicas, rank, shuffle)
+        # Add your custom logic here to determine how to split the dataset
+        
+    def __iter__(self):
+        # Implement your custom iteration logic here
+        
+        yield from super().__iter__()
+"""
 
 class SequenceModule(nn.Module, HyperparametersMixin):
     def __init__(self, config):

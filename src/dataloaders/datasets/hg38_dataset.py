@@ -165,11 +165,15 @@ class HG38Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         """Returns a sequence of specified len"""
+        #FIXME hack for distributed sampling
+        if dist.is_initialized():
+            idx = idx//dist.get_world_size()
+
         # sample a random row from df
         row_idx, shift_idx = idx // self.shifts, idx % self.shifts
         row = self.df.iloc[row_idx]
         chr_name, start, end = (row.iloc[0], row.iloc[1], row.iloc[2])
-
+        print('data for',idx,' pulled from',row,'with',shift_idx,'shit')
         seq = self.fasta(
             chr_name,
             start,
@@ -210,13 +214,13 @@ class HG38Dataset(torch.utils.data.Dataset):
                 seq = seq["input_ids"][1:]  # remove the bos, keep the eos token
             else:
                 seq = seq["input_ids"][1:-1]  # remove both special tokens
-
         # convert to tensor
         seq = torch.LongTensor(seq)
 
         # replace N token with a pad token, so we can ignore it in the loss
         seq = self.replace_value(seq, self.tokenizer._vocab_str_to_int["N"], self.tokenizer.pad_token_id)
 
+        #torch.save(seq,f"seq_{idx}_{dist.get_rank() if dist.is_initialized() else 0}")
         if self.mlm:
             data, target = mlm_getitem(
                 seq,
@@ -224,7 +228,7 @@ class HG38Dataset(torch.utils.data.Dataset):
                 contains_eos=self.add_eos,
                 tokenizer=self.tokenizer,
                 eligible_replacements=self.eligible_replacements,
-                seed=idx, #For repro in context parallel with multiple GPUs
+                seed=start, #For repro in context parallel with multiple GPUs
             )
 
         else:
@@ -245,6 +249,6 @@ class HG38Dataset(torch.utils.data.Dataset):
             
             data = data[ileft:iright].contiguous()
             target = target[ileft:iright].contiguous()
-            #print('Final sequence length for',rank,seq.shape)
+            print('Final sequence length for',idx,'is',rank,seq.shape,'diff',ileft,iright)
 
         return data, target

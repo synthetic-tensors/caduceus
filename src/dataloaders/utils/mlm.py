@@ -7,8 +7,9 @@ def mlm_getitem(seq, mlm_probability=0.15, contains_eos=False, tokenizer=None, e
     Adapted from:
     https://github.com/huggingface/transformers/blob/14666775a296a76c88e1aa686a9547f393d322e2/src/transformers/data/data_collator.py#L751
     """
-    if seed is not None:
-        torch.manual_seed(seed) #Added for context parallel to make reproducible
+    #if seed is not None:
+    #    torch.manual_seed(seed) #Added for context parallel to make reproducible
+    torch.manual_seed(0)
 
     data = seq[:-1].clone() if contains_eos else seq.clone()  # remove eos, if applicable
     target = data.clone()
@@ -22,7 +23,6 @@ def mlm_getitem(seq, mlm_probability=0.15, contains_eos=False, tokenizer=None, e
     # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
     indices_replaced = torch.bernoulli(torch.full(target.shape, 0.8)).bool() & masked_indices
     data[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
-
     # 10% of the time, we replace masked input tokens with random word
     indices_random = torch.bernoulli(torch.full(target.shape, 0.5)).bool() & masked_indices & ~indices_replaced
     if eligible_replacements is not None:
@@ -31,5 +31,6 @@ def mlm_getitem(seq, mlm_probability=0.15, contains_eos=False, tokenizer=None, e
     else:
         random_words = torch.randint(len(tokenizer), size=target.shape, dtype=torch.long)
     data[indices_random] = random_words[indices_random]
+    # FIXME this was breaking repro so commented it out
     # The rest of the time (10% of the time) we keep the masked input tokens unchanged
     return data, target
