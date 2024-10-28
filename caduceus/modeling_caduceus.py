@@ -38,8 +38,6 @@ def create_block(
         rcps=False,
         device=None,
         dtype=None,
-        context_parallel=False,
-        padding=3,
 ):
     """Create Caduceus block.
 
@@ -67,7 +65,6 @@ def create_block(
             norm_cls=norm_cls,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
-            padding=padding
         )
     else:
         block = block_cls(
@@ -76,7 +73,6 @@ def create_block(
             norm_cls=norm_cls,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
-            padding=padding
         )
     block.layer_idx = layer_idx
     return block
@@ -105,6 +101,13 @@ class BiMambaWrapper(nn.Module):
             **mamba_kwargs
         )
         if bidirectional:
+            if mamba_kwargs['context_parallel']:
+                world_size = dist.get_world_size()
+                rank = dist.get_rank()
+                # Create a new group with ranks in reverse order
+                reversed_ranks = [world_size - 1 - rank for rank in range(world_size)]
+                reversed_group = dist.new_group(ranks=reversed_ranks)
+                mamba_kwargs['process_group'] = reversed_group
             self.mamba_rev = Mamba(
                 d_model=d_model,
                 **mamba_kwargs
