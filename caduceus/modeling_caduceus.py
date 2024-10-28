@@ -67,7 +67,6 @@ def create_block(
             norm_cls=norm_cls,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
-            context_parallel=context_parallel,
             padding=padding
         )
     else:
@@ -77,7 +76,6 @@ def create_block(
             norm_cls=norm_cls,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
-            context_parallel=context_parallel,
             padding=padding
         )
     block.layer_idx = layer_idx
