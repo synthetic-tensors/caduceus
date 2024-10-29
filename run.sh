@@ -1,4 +1,4 @@
-length=$((2**19))
+length=$((2**21))
 CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch --num_processes 4 train_accel_gpu.py   \
 	dataset.shuffle=false \
 	experiment=hg38/hg38  \
