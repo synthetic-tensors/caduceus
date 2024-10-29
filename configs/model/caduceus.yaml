@@ -20,6 +20,7 @@ config:
     conv_bias: true
     bias: false
     context_parallel: false
+    sequence_parallel: false
       #use_fast_path: true
   rms_norm: true
   fused_add_norm: true

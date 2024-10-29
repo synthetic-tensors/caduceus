@@ -173,7 +173,7 @@ class HG38Dataset(torch.utils.data.Dataset):
         row_idx, shift_idx = idx // self.shifts, idx % self.shifts
         row = self.df.iloc[row_idx]
         chr_name, start, end = (row.iloc[0], row.iloc[1], row.iloc[2])
-        print('data for',idx,' pulled from',row,'with',shift_idx,'shit')
+        #print('data for',idx,' pulled from',row,'with',shift_idx,'shift')
         seq = self.fasta(
             chr_name,
             start,

@@ -135,8 +135,8 @@ def main(config: OmegaConf):
     # Start model training and defining the training loop
     model.train()
     world_size = torch.cuda.device_count()
-    print(world_size)
-    print(train_dl.sampler)
+    #print(world_size)
+    #print(train_dl.sampler)
     for epoch in range(0,1):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training

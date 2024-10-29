@@ -96,6 +96,7 @@ class BiMambaWrapper(nn.Module):
             raise NotImplementedError(f"`{bidirectional_strategy}` strategy for bi-directionality is not implemented!")
         self.bidirectional = bidirectional
         self.bidirectional_strategy = bidirectional_strategy
+        #print(f"fwd {mamba_kwargs}")
         self.mamba_fwd = Mamba(
             d_model=d_model,
             **mamba_kwargs
@@ -108,6 +109,7 @@ class BiMambaWrapper(nn.Module):
                 reversed_ranks = [world_size - 1 - rank for rank in range(world_size)]
                 reversed_group = dist.new_group(ranks=reversed_ranks)
                 mamba_kwargs['process_group'] = reversed_group
+            #print(f"rev {mamba_kwargs}")
             self.mamba_rev = Mamba(
                 d_model=d_model,
                 **mamba_kwargs
@@ -189,7 +191,6 @@ class CaduceusMixerModel(nn.Module):
         if config.fused_add_norm:
             if layer_norm_fn is None or rms_norm_fn is None:
                 raise ImportError("Failed to import Triton LayerNorm / RMSNorm kernels")
-
         self.layers = nn.ModuleList(
             [
                 create_block(
@@ -204,7 +205,6 @@ class CaduceusMixerModel(nn.Module):
                     bidirectional_strategy=config.bidirectional_strategy,
                     bidirectional_weight_tie=config.bidirectional_weight_tie,
                     rcps=config.rcps,
-                    padding=config.padding,
                     **factory_kwargs,
                 )
                 for i in range(config.n_layer)
