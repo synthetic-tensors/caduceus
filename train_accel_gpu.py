@@ -151,10 +151,10 @@ def main(config: OmegaConf):
             #print(f'optimize on {dist.get_rank()}')
             rank = dist.get_rank() if dist.is_initialized() else 0
             #print(dist.get_rank(), 'writing files')
-            torch.save(batch[0],f'input_{rank}.pt')
-            torch.save(batch[1],f'target_{rank}.pt')
-            torch.save({x[0]:x[1].grad for x in model.named_parameters()}, f"grad_dict_{rank}.pt")
-            exit()
+            #torch.save(batch[0],f'input_{rank}.pt')
+            #torch.save(batch[1],f'target_{rank}.pt')
+            #torch.save({x[0]:x[1].grad for x in model.named_parameters()}, f"grad_dict_{rank}.pt")
+            #exit()
             optimizer.step()
             #lr_scheduler.step()
             if accelerator.is_main_process:

@@ -249,6 +249,6 @@ class HG38Dataset(torch.utils.data.Dataset):
             
             data = data[ileft:iright].contiguous()
             target = target[ileft:iright].contiguous()
-            print('Final sequence length for',idx,'is',rank,seq.shape,'diff',ileft,iright)
+            #print('Final sequence length for',idx,'is',rank,seq.shape,'diff',ileft,iright)
 
         return data, target
