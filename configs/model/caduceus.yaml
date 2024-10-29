@@ -19,6 +19,7 @@ config:
     dt_init_floor: 1e-4
     conv_bias: true
     bias: false
+    context_parallel: true
       #use_fast_path: true
   rms_norm: true
   fused_add_norm: true
@@ -41,7 +42,3 @@ config:
 
   # Used for RCPSEmbedding / RCPSLMHead (will be filled in during model instantiation using info from tokenizer)
   complement_map: null
-
-  # Added for context parallel
-  context_parallel: false
-  padding: 3

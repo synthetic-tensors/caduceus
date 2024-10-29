@@ -204,7 +204,6 @@ class CaduceusMixerModel(nn.Module):
                     bidirectional_strategy=config.bidirectional_strategy,
                     bidirectional_weight_tie=config.bidirectional_weight_tie,
                     rcps=config.rcps,
-                    context_parallel=config.context_parallel,
                     padding=config.padding,
                     **factory_kwargs,
                 )
