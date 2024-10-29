@@ -19,7 +19,7 @@ config:
     dt_init_floor: 1e-4
     conv_bias: true
     bias: false
-    context_parallel: true
+    context_parallel: false
       #use_fast_path: true
   rms_norm: true
   fused_add_norm: true

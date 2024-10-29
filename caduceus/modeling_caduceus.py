@@ -351,8 +351,7 @@ class CaduceusPreTrainedModel(PreTrainedModel):
 
 class Caduceus(CaduceusPreTrainedModel):
     """Caduceus model that can be instantiated using HF patterns."""
-    def __init__(self, config: CaduceusConfig, device=None, dtype=None, context_parallel=False,
-            **kwargs):
+    def __init__(self, config: CaduceusConfig, device=None, dtype=None, **kwargs):
         super().__init__(config)
 
         if config.rcps:
@@ -366,7 +365,7 @@ class Caduceus(CaduceusPreTrainedModel):
                 config.complement_map[i] = i
 
         self.config = config
-        factory_kwargs = {"device": device, "dtype": dtype, "context_parallel": context_parallel}
+        factory_kwargs = {"device": device, "dtype": dtype}
         self.backbone = CaduceusMixerModel(config, **factory_kwargs, **kwargs)
 
     def forward(
