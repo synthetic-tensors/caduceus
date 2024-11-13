@@ -8,23 +8,17 @@ from functools import partial
 from typing import Optional, Tuple, Union
 
 import torch
-from mamba_ssm.modules.mamba_simple import Mamba
-try:
-    from mamba_ssm.modules.mamba_simple import Block  # Legacy mambav1 file structure
-except ImportError:
-    from mamba_ssm.modules.block import Block  # mambav2 file structure
+#from mamba_ssm.modules.mamba2_simple import Mamba2Simple as Mamba
+from mamba_ssm.modules.mamba2 import Mamba2 as Mamba
+from mamba_ssm.modules.block import Block
 from torch import nn
 from torch.nn import functional as F
 from transformers import PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutputWithNoAttention, MaskedLMOutput, SequenceClassifierOutput
 
-try:
-    from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn  # Legacy mambav1 file structure
-except ImportError:
-    try:
-        from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn  # mambav2 file structure
-    except ImportError:
-        RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
+import torch.distributed as dist
+
+from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
 
 from .configuration_caduceus import CaduceusConfig
 from .modeling_rcps import RCPSAddNormWrapper, RCPSEmbedding, RCPSLMHead, RCPSMambaBlock
@@ -102,11 +96,20 @@ class BiMambaWrapper(nn.Module):
             raise NotImplementedError(f"`{bidirectional_strategy}` strategy for bi-directionality is not implemented!")
         self.bidirectional = bidirectional
         self.bidirectional_strategy = bidirectional_strategy
+        #print(f"fwd {mamba_kwargs}")
         self.mamba_fwd = Mamba(
             d_model=d_model,
             **mamba_kwargs
         )
         if bidirectional:
+            if mamba_kwargs['context_parallel']:
+                world_size = dist.get_world_size()
+                rank = dist.get_rank()
+                # Create a new group with ranks in reverse order
+                reversed_ranks = [world_size - 1 - rank for rank in range(world_size)]
+                reversed_group = dist.new_group(ranks=reversed_ranks)
+                mamba_kwargs['process_group'] = reversed_group
+            #print(f"rev {mamba_kwargs}")
             self.mamba_rev = Mamba(
                 d_model=d_model,
                 **mamba_kwargs
@@ -125,11 +128,11 @@ class BiMambaWrapper(nn.Module):
         hidden_states: (B, L, D)
         Returns: same shape as hidden_states
         """
-        out = self.mamba_fwd(hidden_states, inference_params=inference_params)
+        out = self.mamba_fwd(hidden_states )#, inference_params=inference_params)
         if self.bidirectional:
             out_rev = self.mamba_rev(
                 hidden_states.flip(dims=(1,)),  # Flip along the sequence length dimension
-                inference_params=inference_params
+                #inference_params=inference_params
             ).flip(dims=(1,))  # Flip back for combining with forward hidden states
             if self.bidirectional_strategy == "add":
                 out = out + out_rev
@@ -169,6 +172,7 @@ class CaduceusMixerModel(nn.Module):
             config: CaduceusConfig,
             device=None,
             dtype=None,
+            context_parallel=False
     ) -> None:
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
@@ -187,7 +191,6 @@ class CaduceusMixerModel(nn.Module):
         if config.fused_add_norm:
             if layer_norm_fn is None or rms_norm_fn is None:
                 raise ImportError("Failed to import Triton LayerNorm / RMSNorm kernels")
-
         self.layers = nn.ModuleList(
             [
                 create_block(
@@ -220,6 +223,9 @@ class CaduceusMixerModel(nn.Module):
             hidden_states = inputs_embeds
         else:
             hidden_states = self.embeddings(input_ids)
+        
+        #print(dist.get_rank(),dist.get_world_size())
+        #print(dist.is_initialized())
 
         residual = None
         for layer in self.layers:
@@ -230,6 +236,8 @@ class CaduceusMixerModel(nn.Module):
                 hidden_states, residual, inference_params=None
             )
 
+            #print(f'{dist.get_rank() = } - {layer.layer_idx = } - {hidden_states.shape = }')
+            #print(f'{dist.get_rank() = } - {layer.layer_idx = } - {residual.shape = }')
         if not self.fused_add_norm:
             if self.rcps:
                 # Set prenorm=False here since we don't need the residual

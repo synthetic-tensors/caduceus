@@ -7,12 +7,14 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import torch.distributed as dist
+from einops import rearrange
 from pyfaidx import Fasta
 
 from src.dataloaders.utils.mlm import mlm_getitem
 from src.dataloaders.utils.rc import coin_flip, string_reverse_complement
 
-MAX_ALLOWED_LENGTH = 2 ** 20
+MAX_ALLOWED_LENGTH = 2 ** 26
 
 
 class FastaInterval:
@@ -107,7 +109,11 @@ class HG38Dataset(torch.utils.data.Dataset):
             return_seq_indices=False,
             rc_aug=False,
             return_augs=False,
+            context_parallel=False,
     ):
+        self.context_parallel=context_parallel
+        print(mlm, 'MLM CONTEXT')
+        print(context_parallel,'CONTEXT PARALLEL')
         self.mlm = mlm
         self.mlm_probability = mlm_probability
         if self.mlm and self.mlm_probability <= 0.0:
@@ -159,11 +165,15 @@ class HG38Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         """Returns a sequence of specified len"""
+        #FIXME hack for distributed sampling
+        if dist.is_initialized():
+            idx = idx//dist.get_world_size()
+
         # sample a random row from df
         row_idx, shift_idx = idx // self.shifts, idx % self.shifts
         row = self.df.iloc[row_idx]
         chr_name, start, end = (row.iloc[0], row.iloc[1], row.iloc[2])
-
+        #print('data for',idx,' pulled from',row,'with',shift_idx,'shift')
         seq = self.fasta(
             chr_name,
             start,
@@ -204,13 +214,13 @@ class HG38Dataset(torch.utils.data.Dataset):
                 seq = seq["input_ids"][1:]  # remove the bos, keep the eos token
             else:
                 seq = seq["input_ids"][1:-1]  # remove both special tokens
-
         # convert to tensor
         seq = torch.LongTensor(seq)
 
         # replace N token with a pad token, so we can ignore it in the loss
         seq = self.replace_value(seq, self.tokenizer._vocab_str_to_int["N"], self.tokenizer.pad_token_id)
 
+        #torch.save(seq,f"seq_{idx}_{dist.get_rank() if dist.is_initialized() else 0}")
         if self.mlm:
             data, target = mlm_getitem(
                 seq,
@@ -218,10 +228,27 @@ class HG38Dataset(torch.utils.data.Dataset):
                 contains_eos=self.add_eos,
                 tokenizer=self.tokenizer,
                 eligible_replacements=self.eligible_replacements,
+                seed=start, #For repro in context parallel with multiple GPUs
             )
 
         else:
             data = seq[:-1].clone()
             target = seq[1:].clone()
+        if self.context_parallel:
+            #FIXME the sequence can be obtained directly from the indices by modifying the preprocess step before this
+            # With the FASTA Interval function
+            length = data.shape[0]
+            #print('sequence length: ', seq.shape[0], 'Max length',MAX_ALLOWED_LENGTH)
+            num_gpus = dist.get_world_size()
+            rank = dist.get_rank()
+            seq_per_gpu = length // num_gpus
+            assert length % num_gpus < 2, "Not the right sequence shape for world"
+            #print('running on ', rank, ' with ', seq_per_gpu)
+            ileft, iright = rank * seq_per_gpu, (rank + 1) * seq_per_gpu if rank != num_gpus-1 else length
+            #seq = rearrange(seq, '(n j) -> n j', n = num_gpus)[rank].contiguous()
+            
+            data = data[ileft:iright].contiguous()
+            target = target[ileft:iright].contiguous()
+            #print('Final sequence length for',idx,'is',rank,seq.shape,'diff',ileft,iright)
 
         return data, target

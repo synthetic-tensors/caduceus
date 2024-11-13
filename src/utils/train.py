@@ -15,6 +15,7 @@ from pytorch_lightning.utilities import rank_zero_only
 
 from src.utils.config import omegaconf_filter_keys
 
+import torch
 
 # Copied from https://docs.python.org/3/howto/logging-cookbook.html#using-a-context-manager-for-selective-logging
 class LoggingContext:
@@ -168,3 +169,28 @@ class OptimModule(nn.Module):
             if wd is not None:
                 optim["weight_decay"] = wd
             setattr(getattr(self, name), "_optim", optim)
+
+def get_param_norm(model,norm_type=2.0):
+    norm_type = float(norm_type)
+    parameters = model.parameters()
+    local_norm = torch.DoubleTensor([0.0]).to(next(iter(parameters)).device)
+    grads_for_norm = []
+    for param in parameters:
+        param_norm = torch.norm(param.detach(), norm_type)
+        local_norm += param_norm ** norm_type
+    total_norm = local_norm**(1.0 / norm_type)
+    return total_norm
+
+def get_grad_norm(model,norm_type=2.0):
+    norm_type = float(norm_type)
+    parameters = model.parameters()
+    local_norm = torch.FloatTensor([float(0.0)]).to(next(iter(parameters)).device)
+    grads_for_norm = []
+    for param in parameters:
+        grad_not_none = param.grad is not None
+        if grad_not_none:
+            grad = param.grad.detach()
+            grad_norm = torch.norm(grad, norm_type)
+            local_norm += grad_norm ** norm_type
+    total_norm = local_norm**(1.0 / norm_type)
+    return total_norm

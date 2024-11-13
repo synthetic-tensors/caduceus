@@ -11,6 +11,7 @@ config:
   residual_in_fp32: false
   ssm_cfg:
     d_state: 16
+    headdim: 64
     d_conv: 4
     expand: 2
     dt_rank: "auto"
@@ -22,6 +23,8 @@ config:
     conv_bias: true
     bias: false
     use_fast_path: true
+    context_parallel: false
+    sequence_parallel: false
 initializer_cfg:
   initializer_range: 0.02
   rescale_prenorm_residual: true
