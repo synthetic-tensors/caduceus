@@ -141,6 +141,7 @@ def main(config: OmegaConf):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
             #print(f'forward on {dist.get_rank()}')
+            print(f'{dist.get_rank()} - {len(batch)} * {batch[0].shape}')
             if world_size > 1:
                 loss = model.module._shared_step(batch, batch_idx, prefix="train")
             else:
