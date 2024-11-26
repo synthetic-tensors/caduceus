@@ -9,7 +9,7 @@ from datasets import load_dataset
 from src.dataloaders.utils.rc import coin_flip, string_reverse_complement
 
 
-class NucleotideTransformerDataset(torch.utils.data.Dataset):
+class ReplogleDataset(torch.utils.data.Dataset):
 
     """
     Loop through fasta file for sequence.
@@ -69,9 +69,9 @@ class NucleotideTransformerDataset(torch.utils.data.Dataset):
         seq = self.tokenizer(
             x,
             add_special_tokens=False,
-            padding="max_length" if self.use_padding else None,
-            max_length=self.max_length,
-            truncation=True,
+            padding=None, #"max_length" if self.use_padding else None,
+            max_length=None, #self.max_length,
+            truncation=False, #True,
         )
         seq_ids = seq["input_ids"]  # get input_ids
 
