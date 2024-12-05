@@ -8,6 +8,7 @@ from datasets import load_dataset
 import pandas as pd
 import anndata as ad
 from src.dataloaders.utils.rc import coin_flip, string_reverse_complement
+
 #from caduceus.tokenization_caduceus import CaduceusTokenizer
 
 class ReplogleDataset(torch.utils.data.Dataset):
@@ -25,6 +26,7 @@ class ReplogleDataset(torch.utils.data.Dataset):
             tokenizer=None, #CaduceusTokenizer(model_max_length=MAX_ALLOWED_LENGTH),
             tokenizer_name=None,
             use_padding=None,
+            add_sgrna=False,
             add_eos=True,
             add_cls=True,
             rc_aug=False,
@@ -35,6 +37,7 @@ class ReplogleDataset(torch.utils.data.Dataset):
     ):
 
         # self.max_length = max_length
+        self.add_sgrna=add_sgrna
         self.use_padding = use_padding
         self.tokenizer_name = tokenizer_name
         self.tokenizer = tokenizer
@@ -74,18 +77,19 @@ class ReplogleDataset(torch.utils.data.Dataset):
         indices = (torch.randperm(self.num_targets) if self.shuffle_genes else torch.arange(self.num_targets)).tolist()
 
         seq_ids, y = [], []
-        for x in sgrna_seqs:
-            seq = self.tokenizer(
-                x,
-                add_special_tokens=False,
-                padding='do_not_pad',  # "max_length" if self.use_padding else None,
-                max_length=None,  # self.max_length,
-                truncation=False,  # True,
-            )
-            seq_ids += seq["input_ids"]
-            if self.add_eos:
-                # append list seems to be faster than append tensor
-                seq_ids.append(self.tokenizer.sep_token_id)
+        if self.add_sgrna:
+            for x in sgrna_seqs:
+                seq = self.tokenizer(
+                    x,
+                    add_special_tokens=False,
+                    padding='do_not_pad',  # "max_length" if self.use_padding else None,
+                    max_length=None,  # self.max_length,
+                    truncation=False,  # True,
+                )
+                seq_ids += seq["input_ids"]
+                if self.add_eos:
+                    # append list seems to be faster than append tensor
+                    seq_ids.append(self.tokenizer.sep_token_id)
 
                 # TODO need to add all sample genes to this list too
         for idx in indices:
@@ -116,6 +120,24 @@ class ReplogleDataset(torch.utils.data.Dataset):
         # print(seq_ids)
         seq_ids = torch.LongTensor(seq_ids)
         # print(y.shape)
-        target = torch.Tensor(y)
+        expr_values = torch.Tensor(y)
         # target = torch.from_numpy(np.concat(y))
-        return seq_ids, target
+
+        if self.mlm:
+            seq_ids, seq_target = mlm_getitem(
+                seq_ids,
+                mlm_probability=self.mlm_probability,
+                #contains_eos=self.add_eos,
+                tokenizer=self.tokenizer,
+                eligible_replacements=self.eligible_replacements,
+                seed=start,  # For repro in context parallel with multiple GPUs
+            )
+
+            if self.mlm:
+                expr_values, expr_target = mlm_getitem(
+                    expr_values,
+                    mlm_probability=self.mlm_probability,
+                    seed=start,  # For repro in context parallel with multiple GPUs
+                )
+
+        return seq_ids, expr_values, seq_target, expr_target
