@@ -1,4 +1,4 @@
-"""Caduceus model for Hugging Face.
+"""ESP model for Hugging Face.
 
 """
 
@@ -20,7 +20,7 @@ import torch.distributed as dist
 
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
 
-from .configuration_caduceus import CaduceusConfig
+from .configuration_ESP import ESPConfig
 from .modeling_rcps import RCPSAddNormWrapper, RCPSEmbedding, RCPSLMHead, RCPSMambaBlock
 
 
@@ -39,7 +39,7 @@ def create_block(
         device=None,
         dtype=None,
 ):
-    """Create Caduceus block.
+    """Create ESP block.
 
     Adapted from: https://github.com/state-spaces/mamba/blob/main/mamba_ssm/models/mixer_seq_simple.py
     """
@@ -143,33 +143,38 @@ class BiMambaWrapper(nn.Module):
         return out
 
 
-class CaduceusEmbeddings(nn.Module):
+class ESPEmbeddings(nn.Module):
     def __init__(
             self,
-            config: CaduceusConfig,
+            config: ESPConfig,
             device=None,
             dtype=None,
     ):
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
-        if config.rcps:
-            self.word_embeddings = RCPSEmbedding(
-                config.vocab_size, config.d_model, config.complement_map, **factory_kwargs
-            )
-        else:
-            self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, **factory_kwargs)
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, **factory_kwargs)
+        self.value_encoder = nn.Linear(1, config.d_model, **factory_kwargs)
 
-    def forward(self, input_ids):
+    def forward(self, input_ids, values):
         """
             input_ids: (batch, seqlen)
+            values: (batch, number of genes/class tokens)
+
+            Encodes values into class tokens and adds them to the standard embeddings
         """
-        return self.word_embeddings(input_ids)
+        class_tokens = (input_ids == self.class_token).nonzero()
+        assert len(class_tokens) == len(values)
+        sequence_embeddings = self.word_embeddings(input_ids)
+        value_embeddings = self.value_encoder(values)
+        value_embeddings[values==-100] = 0 #masked values
+        sequence_embeddings[class_tokens] += value_embeddings
+        return sequence_embeddings
 
 
-class CaduceusMixerModel(nn.Module):
+class ESPMixerModel(nn.Module):
     def __init__(
             self,
-            config: CaduceusConfig,
+            config: ESPConfig,
             device=None,
             dtype=None,
             context_parallel=False
@@ -181,7 +186,7 @@ class CaduceusMixerModel(nn.Module):
         self.rcps = config.rcps
         self.residual_in_fp32 = config.residual_in_fp32
 
-        self.embeddings = CaduceusEmbeddings(config, **factory_kwargs)
+        self.embeddings = ESPEmbeddings(config, **factory_kwargs)
 
         # Mamba changes the order of residual and layer norm:
         # Instead of LN -> Attn / MLP -> Add, we do:
@@ -302,10 +307,10 @@ def weighted_cross_entropy(logits, y, loss_weights, ignore_index=-100):
     return (ce * (loss_weights / loss_weights.sum())).sum()
 
 
-class CaduceusPreTrainedModel(PreTrainedModel):
-    """PreTrainedModel wrapper for Caduceus backbone."""
-    config_class = CaduceusConfig
-    base_model_prefix = "caduceus"
+class ESPPreTrainedModel(PreTrainedModel):
+    """PreTrainedModel wrapper for ESP backbone."""
+    config_class = ESPConfig
+    base_model_prefix = "ESP"
     supports_gradient_checkpointing = False
     _no_split_modules = ["BiMambaWrapper"]
 
@@ -349,9 +354,9 @@ class CaduceusPreTrainedModel(PreTrainedModel):
                         p /= math.sqrt(n_residuals_per_layer * n_layer)
 
 
-class Caduceus(CaduceusPreTrainedModel):
-    """Caduceus model that can be instantiated using HF patterns."""
-    def __init__(self, config: CaduceusConfig, device=None, dtype=None, **kwargs):
+class ESP(ESPPreTrainedModel):
+    """ESP model that can be instantiated using HF patterns."""
+    def __init__(self, config: ESPConfig, device=None, dtype=None, **kwargs):
         super().__init__(config)
 
         if config.rcps:
@@ -366,7 +371,7 @@ class Caduceus(CaduceusPreTrainedModel):
 
         self.config = config
         factory_kwargs = {"device": device, "dtype": dtype}
-        self.backbone = CaduceusMixerModel(config, **factory_kwargs, **kwargs)
+        self.backbone = ESPMixerModel(config, **factory_kwargs, **kwargs)
 
     def forward(
             self,
@@ -397,24 +402,24 @@ class Caduceus(CaduceusPreTrainedModel):
             return hidden_states
 
 
-class CaduceusForMaskedLM(CaduceusPreTrainedModel):
-    """HF-compatible Caduceus model for masked language modeling."""
+class ESPForMaskedLM(ESPPreTrainedModel):
+    """HF-compatible ESP model for masked language modeling."""
 
-    def __init__(self, config: CaduceusConfig, device=None, dtype=None, **kwargs):
+    def __init__(self, config: ESPConfig, device=None, dtype=None, **kwargs):
         super().__init__(config, **kwargs)
         factory_kwargs = {"device": device, "dtype": dtype}
-        self.caduceus = Caduceus(config, **factory_kwargs, **kwargs)
+        self.ESP = ESP(config, **factory_kwargs, **kwargs)
         if config.rcps:
             self.lm_head = RCPSLMHead(
-                complement_map=self.config.complement_map,  # Use caduceus config as it might have been updated
-                vocab_size=self.config.vocab_size,  # Use caduceus config as it might have been updated
+                complement_map=self.config.complement_map,  # Use ESP config as it might have been updated
+                vocab_size=self.config.vocab_size,  # Use ESP config as it might have been updated
                 true_dim=config.d_model,
                 dtype=dtype
             )
         else:
             self.lm_head = nn.Linear(
                 config.d_model,
-                self.config.vocab_size,  # Use caduceus config as it might have been updated
+                self.config.vocab_size,  # Use ESP config as it might have been updated
                 bias=False,
                 **factory_kwargs
             )
@@ -423,12 +428,12 @@ class CaduceusForMaskedLM(CaduceusPreTrainedModel):
         self.post_init()
 
     def get_input_embeddings(self):
-        return self.caduceus.backbone.embeddings.word_embeddings
+        return self.ESP.backbone.embeddings.word_embeddings
 
     def set_input_embeddings(self, value):
         if self.config.rcps:
             raise NotImplementedError("Setting input embeddings for RCPS LM is not supported.")
-        self.caduceus.backbone.embeddings.word_embeddings = value
+        self.ESP.backbone.embeddings.word_embeddings = value
 
     def get_output_embeddings(self):
         return self.lm_head
@@ -448,11 +453,11 @@ class CaduceusForMaskedLM(CaduceusPreTrainedModel):
 
     def get_decoder(self):
         """Get decoder (backbone) for the model."""
-        return self.caduceus
+        return self.ESP
 
     def set_decoder(self, decoder):
         """Set decoder (backbone) for the model."""
-        self.caduceus = decoder
+        self.ESP = decoder
 
     def forward(
         self,
@@ -471,7 +476,7 @@ class CaduceusForMaskedLM(CaduceusPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        outputs = self.caduceus(
+        outputs = self.ESP(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
             output_hidden_states=output_hidden_states,
@@ -500,22 +505,22 @@ class CaduceusForMaskedLM(CaduceusPreTrainedModel):
         )
 
 
-class ESPForMaskedLM(CaduceusPreTrainedModel):
-    """HF-compatible Caduceus model for masked language modeling."""
+class ESPForMaskedLM(ESPPreTrainedModel):
+    """HF-compatible ESP model for masked language modeling."""
 
-    def __init__(self, config: CaduceusConfig, device=None, dtype=None, **kwargs):
+    def __init__(self, config: ESPConfig, device=None, dtype=None, **kwargs):
         super().__init__(config, **kwargs)
         factory_kwargs = {"device": device, "dtype": dtype}
-        self.caduceus = Caduceus(config, **factory_kwargs, **kwargs)
-        self.sequence_lm_head = nn.Linear(
+        self.ESP = ESP(config, **factory_kwargs, **kwargs)
+        self.lm_head = nn.Linear(
                 config.d_model,
-                self.config.vocab_size,  # Use caduceus config as it might have been updated
+                self.config.vocab_size,  # Use ESP config as it might have been updated
                 bias=False,
                 **factory_kwargs
             )
-        self.expression_lm_head = nn.Linear(
+        self.value_head = nn.Linear(
                 config.d_model,
-                1,  # Use caduceus config as it might have been updated
+                1,  # Use ESP config as it might have been updated
                 bias=False,
                 **factory_kwargs
             )
@@ -524,15 +529,15 @@ class ESPForMaskedLM(CaduceusPreTrainedModel):
         self.post_init()
 
     def get_input_embeddings(self):
-        return self.caduceus.backbone.embeddings.word_embeddings
+        return self.ESP.backbone.embeddings.word_embeddings
 
     def set_input_embeddings(self, value):
         if self.config.rcps:
             raise NotImplementedError("Setting input embeddings for RCPS LM is not supported.")
-        self.caduceus.backbone.embeddings.word_embeddings = value
+        self.ESP.backbone.embeddings.word_embeddings = value
 
     def get_output_embeddings(self):
-        return self.expression_lm_head, self.sequence_lm_head
+        return self.lm_head, self.value_head
 
     def set_output_embeddings(self, new_embeddings):
         """Overrides output embeddings."""
@@ -549,17 +554,18 @@ class ESPForMaskedLM(CaduceusPreTrainedModel):
 
     def get_decoder(self):
         """Get decoder (backbone) for the model."""
-        return self.caduceus
+        return self.ESP
 
     def set_decoder(self, decoder):
         """Set decoder (backbone) for the model."""
-        self.caduceus = decoder
+        self.ESP = decoder
 
     def forward(
         self,
         input_ids: torch.LongTensor = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
+        value_labels: Optional[torch.FloatTensor] = None,
         loss_weights: Optional[torch.FloatTensor] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
@@ -572,7 +578,7 @@ class ESPForMaskedLM(CaduceusPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        outputs = self.caduceus(
+        outputs = self.ESP(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
             output_hidden_states=output_hidden_states,
@@ -582,29 +588,35 @@ class ESPForMaskedLM(CaduceusPreTrainedModel):
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
+        value_hidden_states = hidden_states.view[-1, hidden_states.shape[-1]][input_ids.view[-1] == self.config.class_token_id]
+        value_logits = self.value_head(value_hidden_states)
 
         loss = None
         if labels is not None:
             if loss_weights is not None:
-                loss = weighted_cross_entropy(logits, labels, loss_weights, ignore_index=self.config.pad_token_id)
+                mlm_loss = weighted_cross_entropy(logits, labels, loss_weights, ignore_index=self.config.pad_token_id)
             else:
-                loss = cross_entropy(logits, labels, ignore_index=self.config.pad_token_id)
+                mlm_loss = cross_entropy(logits, labels, ignore_index=self.config.pad_token_id)
+            value_loss = F.l1_loss(value_logits[value_labels != -100], value_labels[value_labels!=-100])
+            loss = mlm_loss + value_loss
 
         if not return_dict:
             output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
+            return (loss, mlm_loss, value_loss) + output if loss is not None else output
 
         return MaskedLMOutput(
             loss=loss,
+            mlm_loss=mlm_loss,
+            value_loss=value_loss,
             logits=logits,
             hidden_states=outputs.hidden_states,
         )
 
 
-class CaduceusForSequenceClassification(CaduceusPreTrainedModel):
+class ESPForSequenceClassification(ESPPreTrainedModel):
     def __init__(
             self,
-            config: CaduceusConfig,
+            config: ESPConfig,
             pooling_strategy: str = "mean",
             conjoin_train: bool = False,
             conjoin_eval: bool = False,
@@ -617,7 +629,7 @@ class CaduceusForSequenceClassification(CaduceusPreTrainedModel):
         self.pooling_strategy = pooling_strategy
         factory_kwargs = {"device": device, "dtype": dtype}
         self.num_labels = kwargs.get("num_labels", config.num_labels)
-        self.caduceus = Caduceus(config, **factory_kwargs, **kwargs)
+        self.ESP = ESP(config, **factory_kwargs, **kwargs)
         self.score = nn.Linear(config.d_model, self.num_labels, bias=False)
 
         self.conjoin_train = conjoin_train
@@ -633,12 +645,12 @@ class CaduceusForSequenceClassification(CaduceusPreTrainedModel):
         self.score.weight.data.normal_(std=initializer_range)
 
     def get_input_embeddings(self):
-        return self.caduceus.backbone.embeddings.word_embeddings
+        return self.ESP.backbone.embeddings.word_embeddings
 
     def set_input_embeddings(self, value):
         if self.config.rcps:
             raise NotImplementedError("Setting input embeddings for RCPS LM is not supported.")
-        self.caduceus.backbone.embeddings.word_embeddings = value
+        self.ESP.backbone.embeddings.word_embeddings = value
 
     def pool_hidden_states(self, hidden_states, sequence_length_dim=1):
         """Pools hidden states along sequence length dimension."""
@@ -669,7 +681,7 @@ class CaduceusForSequenceClassification(CaduceusPreTrainedModel):
 
         # Get hidden representations from the backbone
         if self.config.rcps:  # Hidden states have 2 * d_model channels for RCPS
-            transformer_outputs = self.caduceus(
+            transformer_outputs = self.ESP(
                 input_ids,
                 inputs_embeds=inputs_embeds,
                 output_hidden_states=output_hidden_states,
@@ -685,13 +697,13 @@ class CaduceusForSequenceClassification(CaduceusPreTrainedModel):
         elif self.conjoin_train or (self.conjoin_eval and not self.training):  # For conjoining / post-hoc conjoining
             assert input_ids is not None, "`input_ids` must be provided for conjoining."
             assert input_ids.ndim == 3, "`input_ids` must be 3D tensor: channels corresponds to forward and rc strands."
-            transformer_outputs = self.caduceus(
+            transformer_outputs = self.ESP(
                 input_ids[..., 0],
                 inputs_embeds=None,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
-            transformer_outputs_rc = self.caduceus(
+            transformer_outputs_rc = self.ESP(
                 input_ids[..., 1],
                 inputs_embeds=None,
                 output_hidden_states=output_hidden_states,
@@ -700,7 +712,7 @@ class CaduceusForSequenceClassification(CaduceusPreTrainedModel):
             # Stack along channel dimension (dim=-1)
             hidden_states = torch.stack([transformer_outputs[0], transformer_outputs_rc[0]], dim=-1)
         else:
-            transformer_outputs = self.caduceus(
+            transformer_outputs = self.ESP(
                 input_ids,
                 inputs_embeds=None,
                 output_hidden_states=output_hidden_states,
