@@ -8,7 +8,7 @@ from datasets import load_dataset
 import pandas as pd
 import anndata as ad
 from src.dataloaders.utils.rc import coin_flip, string_reverse_complement
-
+from src.dataloaders.utils.mlm import mlm_getitem, mlm_esp_getitem
 #from caduceus.tokenization_caduceus import CaduceusTokenizer
 
 class ReplogleDataset(torch.utils.data.Dataset):
@@ -34,10 +34,14 @@ class ReplogleDataset(torch.utils.data.Dataset):
             conjoin_test=False,
             return_augs=False,
             shuffle_genes=True,
+            mlm=True,
+            mlm_probability=0.15,
     ):
 
         # self.max_length = max_length
-        self.add_sgrna=add_sgrna
+        self.mlm = mlm,
+        self.mlm_probability = mlm_probability,
+        self.add_sgrna = add_sgrna
         self.use_padding = use_padding
         self.tokenizer_name = tokenizer_name
         self.tokenizer = tokenizer
@@ -129,15 +133,15 @@ class ReplogleDataset(torch.utils.data.Dataset):
                 mlm_probability=self.mlm_probability,
                 #contains_eos=self.add_eos,
                 tokenizer=self.tokenizer,
-                eligible_replacements=self.eligible_replacements,
-                seed=start,  # For repro in context parallel with multiple GPUs
+                #eligible_replacements=self.eligible_replacements,
+                #seed=start,  # For repro in context parallel with multiple GPUs
             )
 
             if self.mlm:
                 expr_values, expr_target = mlm_getitem(
                     expr_values,
                     mlm_probability=self.mlm_probability,
-                    seed=start,  # For repro in context parallel with multiple GPUs
+                    #seed=start,  # For repro in context parallel with multiple GPUs
                 )
 
         return seq_ids, expr_values, seq_target, expr_target
