@@ -597,7 +597,8 @@ class ESPForMaskedLM(ESPPreTrainedModel):
                 mlm_loss = weighted_cross_entropy(logits, labels, loss_weights, ignore_index=self.config.pad_token_id)
             else:
                 mlm_loss = cross_entropy(logits, labels, ignore_index=self.config.pad_token_id)
-            value_loss = F.l1_loss(value_logits[value_labels != -100], value_labels[value_labels!=-100])
+            #value_loss = F.l1_loss(value_logits[value_labels != -100], value_labels[value_labels!=-100])
+            value_loss = F.mse_loss(value_logits[value_labels != -100], value_labels[value_labels != -100])
             loss = mlm_loss + value_loss
 
         if not return_dict:
