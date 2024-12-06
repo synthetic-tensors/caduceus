@@ -1,6 +1,7 @@
 length=$((2**20))
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --num_processes 8 train_accel_gpu.py   \
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 accelerate launch --num_processes 8 train_esp_accel_gpu.py   \
 	dataset.shuffle=false \
+	dataset=replogle \
 	experiment=hg38/replogle  \
        	callbacks.model_checkpoint_every_n_steps.every_n_train_steps=500 \
 	dataset.max_length=$length   \

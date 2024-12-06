@@ -20,7 +20,7 @@ import torch.distributed as dist
 
 from mamba_ssm.ops.triton.layer_norm import RMSNorm, layer_norm_fn, rms_norm_fn
 
-from .configuration_ESP import ESPConfig
+from .configuration_esp import ESPConfig
 from .modeling_rcps import RCPSAddNormWrapper, RCPSEmbedding, RCPSLMHead, RCPSMambaBlock
 
 
@@ -431,25 +431,18 @@ class ESPForMaskedLM(ESPPreTrainedModel):
         return self.ESP.backbone.embeddings.word_embeddings
 
     def set_input_embeddings(self, value):
-        if self.config.rcps:
-            raise NotImplementedError("Setting input embeddings for RCPS LM is not supported.")
-        self.ESP.backbone.embeddings.word_embeddings = value
+        raise NotImplementedError("Setting input embeddings for RCPS LM is not supported.")
 
     def get_output_embeddings(self):
         return self.lm_head
 
     def set_output_embeddings(self, new_embeddings):
         """Overrides output embeddings."""
-        if self.config.rcps:
-            raise NotImplementedError("Setting output embeddings for RCPS LM is not supported.")
-        self.lm_head = new_embeddings
+        raise NotImplementedError("Setting output embeddings for RCPS LM is not supported.")
 
     def tie_weights(self):
         """Tie weights, accounting for RCPS."""
-        if self.config.rcps:
-            self.lm_head.set_weight(self.get_input_embeddings().weight)
-        else:
-            super().tie_weights()
+        super().tie_weights()
 
     def get_decoder(self):
         """Get decoder (backbone) for the model."""
@@ -532,12 +525,10 @@ class ESPForMaskedLM(ESPPreTrainedModel):
         return self.ESP.backbone.embeddings.word_embeddings
 
     def set_input_embeddings(self, value):
-        if self.config.rcps:
-            raise NotImplementedError("Setting input embeddings for RCPS LM is not supported.")
-        self.ESP.backbone.embeddings.word_embeddings = value
+        raise NotImplementedError("Setting input embeddings for RCPS LM is not supported.")
 
     def get_output_embeddings(self):
-        return self.lm_head, self.value_head
+        return self.lm_head
 
     def set_output_embeddings(self, new_embeddings):
         """Overrides output embeddings."""
@@ -547,10 +538,7 @@ class ESPForMaskedLM(ESPPreTrainedModel):
 
     def tie_weights(self):
         """Tie weights, accounting for RCPS."""
-        if self.config.rcps:
-            self.lm_head.set_weight(self.get_input_embeddings().weight)
-        else:
-            super().tie_weights()
+        super().tie_weights()
 
     def get_decoder(self):
         """Get decoder (backbone) for the model."""

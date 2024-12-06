@@ -11,6 +11,7 @@ from src.dataloaders import SequenceDataset  # TODO make registry
 
 #from accel_model import SequenceModule
 from caduceus.modeling_esp import ESPForMaskedLM
+from caduceus.configuration_esp import ESPConfig
 from src.utils import registry
 import src.utils as utils
 from src.utils.train import get_grad_norm, get_param_norm
@@ -33,9 +34,19 @@ def main(config: OmegaConf):
 
     if config.train.seed is not None:
         set_seed(42) #config.train.seed)
-    model = ESPForMaskedLM(config)
+    model_config = ESPConfig(**config.model.config)
+    model = ESPForMaskedLM(model_config)
     print(model)
-    train_dl, eval_dl = model.train_dataloader(), model.val_dataloader()
+    #print(model_config)
+
+    # Dataset arguments
+    print(SequenceDataset.registry.keys())
+    self.dataset = SequenceDataset.registry[config.dataset._name_](
+        **config.dataset
+    )
+
+    eval_dl = self.dataset.val_dataloader(**config.loader)
+    train_dl = self.dataset.dataloader(**config.loader)
 
     config.n_params_emb, config.n_params_nonemb = count_parameters(model, print_summary=False)
 
