@@ -221,13 +221,13 @@ class ESPMixerModel(nn.Module):
         )
         self.norm_f = norm_f if (config.fused_add_norm or not config.rcps) else RCPSAddNormWrapper(norm_f)
 
-    def forward(self, input_ids, inputs_embeds=None, output_hidden_states=False):
+    def forward(self, input_ids, values, inputs_embeds=None, output_hidden_states=False):
         """Mixer forward."""
         all_hidden_states = []
         if inputs_embeds is not None:
             hidden_states = inputs_embeds
         else:
-            hidden_states = self.embeddings(input_ids)
+            hidden_states = self.embeddings(input_ids, values)
         
         #print(dist.get_rank(),dist.get_world_size())
         #print(dist.is_initialized())
@@ -376,6 +376,7 @@ class ESP(ESPPreTrainedModel):
     def forward(
             self,
             input_ids: torch.LongTensor = None,
+            values: torch.FloatTensor = None,
             inputs_embeds: Optional[torch.FloatTensor] = None,
             output_hidden_states: Optional[bool] = None,
             return_dict: Optional[bool] = None,
@@ -388,6 +389,7 @@ class ESP(ESPPreTrainedModel):
 
         hidden_states, all_hidden_states = self.backbone(
             input_ids,
+            values,
             inputs_embeds=inputs_embeds,
             output_hidden_states=output_hidden_states
         )
@@ -400,102 +402,6 @@ class ESP(ESPPreTrainedModel):
             return hidden_states, all_hidden_states
         else:
             return hidden_states
-
-
-class ESPForMaskedLM(ESPPreTrainedModel):
-    """HF-compatible ESP model for masked language modeling."""
-
-    def __init__(self, config: ESPConfig, device=None, dtype=None, **kwargs):
-        super().__init__(config, **kwargs)
-        factory_kwargs = {"device": device, "dtype": dtype}
-        self.ESP = ESP(config, **factory_kwargs, **kwargs)
-        if config.rcps:
-            self.lm_head = RCPSLMHead(
-                complement_map=self.config.complement_map,  # Use ESP config as it might have been updated
-                vocab_size=self.config.vocab_size,  # Use ESP config as it might have been updated
-                true_dim=config.d_model,
-                dtype=dtype
-            )
-        else:
-            self.lm_head = nn.Linear(
-                config.d_model,
-                self.config.vocab_size,  # Use ESP config as it might have been updated
-                bias=False,
-                **factory_kwargs
-            )
-
-        # Initialize weights and apply final processing
-        self.post_init()
-
-    def get_input_embeddings(self):
-        return self.ESP.backbone.embeddings.word_embeddings
-
-    def set_input_embeddings(self, value):
-        raise NotImplementedError("Setting input embeddings for RCPS LM is not supported.")
-
-    def get_output_embeddings(self):
-        return self.lm_head
-
-    def set_output_embeddings(self, new_embeddings):
-        """Overrides output embeddings."""
-        raise NotImplementedError("Setting output embeddings for RCPS LM is not supported.")
-
-    def tie_weights(self):
-        """Tie weights, accounting for RCPS."""
-        super().tie_weights()
-
-    def get_decoder(self):
-        """Get decoder (backbone) for the model."""
-        return self.ESP
-
-    def set_decoder(self, decoder):
-        """Set decoder (backbone) for the model."""
-        self.ESP = decoder
-
-    def forward(
-        self,
-        input_ids: torch.LongTensor = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        loss_weights: Optional[torch.FloatTensor] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, MaskedLMOutput]:
-        """HF-compatible forward method."""
-
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        outputs = self.ESP(
-            input_ids=input_ids,
-            inputs_embeds=inputs_embeds,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-
-        hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states)
-        logits = logits.float()
-
-        loss = None
-        if labels is not None:
-            if loss_weights is not None:
-                loss = weighted_cross_entropy(logits, labels, loss_weights, ignore_index=self.config.pad_token_id)
-            else:
-                loss = cross_entropy(logits, labels, ignore_index=self.config.pad_token_id)
-
-        if not return_dict:
-            output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
-
-        return MaskedLMOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-        )
 
 
 class ESPForMaskedLM(ESPPreTrainedModel):
@@ -551,6 +457,7 @@ class ESPForMaskedLM(ESPPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
+        values: torch.FloatTensor = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
         value_labels: Optional[torch.FloatTensor] = None,
@@ -568,6 +475,7 @@ class ESPForMaskedLM(ESPPreTrainedModel):
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.ESP(
             input_ids=input_ids,
+            values=values,
             inputs_embeds=inputs_embeds,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
@@ -576,7 +484,7 @@ class ESPForMaskedLM(ESPPreTrainedModel):
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-        value_hidden_states = hidden_states.view[-1, hidden_states.shape[-1]][input_ids.view[-1] == self.config.class_token_id]
+        value_hidden_states = hidden_states.view[-1, hidden_states.shape[-1]][input_ids.view[-1] == self.config.class_token_id] #flatten batch and sequence
         value_logits = self.value_head(value_hidden_states)
 
         loss = None

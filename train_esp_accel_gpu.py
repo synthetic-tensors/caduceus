@@ -3,23 +3,51 @@ from time import gmtime, strftime
 from tqdm.auto import tqdm
 import torch
 import torch.distributed as dist
-#from utils.training import count_parameters #, move_to
+from utils.training import count_parameters #, move_to
 import hydra
 from accelerate import Accelerator
 from accelerate.utils import set_seed
-from src.dataloaders import SequenceDataset  # TODO make registry
+from torch.utils.data.dataloader import DataLoader
 
+#from src.dataloaders import SequenceDataset  # TODO make registry
+import datasets
 #from accel_model import SequenceModule
 from caduceus.modeling_esp import ESPForMaskedLM
 from caduceus.configuration_esp import ESPConfig
+from caduceus.tokenization_caduceus import CaduceusTokenizer
 from src.utils import registry
 import src.utils as utils
 from src.utils.train import get_grad_norm, get_param_norm
 from src.utils.optim_groups import add_optimizer_hooks
 from omegaconf import OmegaConf
-
+from src.dataloaders.utils.mlm import mlm_esp_getitem, mlm_getitem
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def collate_fn(batch, mlm_probability=0.15):
+    input_ids, input_vals, sgrnas = batch
+    num_samples = input_ids.shape[0]
+    seq_ids, seq_targets, expr_values, expr_targets = [], [], [], []
+    for idx in range(num_samples):
+        seq_id, seq_target = mlm_getitem(
+            input_ids,
+                mlm_probability=mlm_probability,
+                tokenizer=CaduceusTokenizer(),
+            )
+
+        expr_value, expr_target = mlm_esp_getitem(
+            input_vals,
+            mlm_probability=mlm_probability,
+        )
+        seq_ids.append(seq_id)
+        seq_targets.append(seq_target)
+        expr_values.append(expr_value)
+        expr_targets.append(expr_target)
+    return {'input_ids': torch.stack(seq_ids), \
+            'values': torch.cat(expr_values), \
+            'labels': torch.stack(seq_target), \
+            'value_labels': torch.cat(expr_target)}
+    # corresponding model inputs are (input_ids, values, labels, value_labels)
 
 @hydra.main(config_path="configs", config_name="config.yaml")
 def main(config: OmegaConf):
@@ -40,18 +68,33 @@ def main(config: OmegaConf):
     #print(model_config)
 
     # Dataset arguments
-    print(SequenceDataset.registry.keys())
-    self.dataset = SequenceDataset.registry[config.dataset._name_](
-        **config.dataset
-    )
-
-    eval_dl = self.dataset.val_dataloader(**config.loader)
-    train_dl = self.dataset.dataloader(**config.loader)
-
+    #print(SequenceDataset.registry.keys())
+    #self.dataset = SequenceDataset.registry[config.dataset._name_](
+    #    **config.dataset
+    #)
+    local_rank = dist.get_rank()
+    train_dataset, val_dataset = datasets.load_from_disk(f'dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch').train_test_split(0.1)
+    train_dl = DataLoader(
+                train_dataset,
+                batch_size=2, #batch_size,
+                shuffle=False,
+                #sampler=sampler,
+                collate_fn=collate_fn,
+                #**kwargs,
+                )
+    val_dl = DataLoader(
+                val_dataset,
+                batch_size=2, #batch_size,
+                shuffle=False,
+                #sampler=sampler,
+                collate_fn = collate_fn,
+                #**kwargs,
+                )
     config.n_params_emb, config.n_params_nonemb = count_parameters(model, print_summary=False)
 
     # Initialise your wandb run, passing wandb parameters and any config information
     init_kwargs={"wandb": {"entity": "josiahbjorgaard"}}
+
     accelerator.init_trackers(
         project_name="ESP",
         config=dict(config),
@@ -61,7 +104,8 @@ def main(config: OmegaConf):
     accelerator.print(f"Number of embedding parameters: {config.n_params_emb/10**6}M")
     accelerator.print(f"Number of non-embedding parameters: {config.n_params_nonemb/10**6}M")
     accelerator.print(f"Number of training batches per epoch: {len(train_dl)}")
-    num_training_steps = 1 * len(train_dl)
+
+    num_training_steps = len(train_dl)
 
     # Set zero weight decay for some params
     if 'optimizer_param_grouping' in model.hparams.train:
@@ -75,31 +119,29 @@ def main(config: OmegaConf):
     #model, optimizer, train_dl, eval_dl, lr_scheduler = accelerator.prepare(
     #     model, optimizer, train_dl, eval_dl, lr_scheduler
     #     )
-    model,optimizer,train_dl,eval_dl = accelerator.prepare(model, optimizer, train_dl, eval_dl)
-    
+    model, optimizer = accelerator.prepare(model, optimizer)
     if accelerator.is_main_process:
         progress_bar = tqdm(range(num_training_steps), initial = 0 * len(train_dl))
 
     # Start model training and defining the training loop
     model.train()
-    world_size = torch.cuda.device_count()
-    #print(world_size)
-    #print(train_dl.sampler)
     for epoch in range(0,1):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
             print(f'{dist.get_rank()} - {len(batch)} * {batch[0].shape}')
             if world_size > 1:
-                loss = model.module._shared_step(batch, batch_idx, prefix="train")
+                #loss = model.module._shared_step(batch, batch_idx, prefix="train")
+                out_dict = model(**batch, return_dict=True)
+                loss = out_dict.loss
             else:
-                loss = model._shared_step(batch, batch_idx, prefix="train")
+                #loss = model._shared_step(batch, batch_idx, prefix="train")
+                raise Exception("need distributed")
             accelerator.backward(loss)
-            rank = dist.get_rank() if dist.is_initialized() else 0
             optimizer.step()
             #lr_scheduler.step()
             if accelerator.is_main_process:
-                progress_bar.update(world_size)
-            accelerator.log({'loss':loss, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})
+                progress_bar.update(1)
+            accelerator.log({'loss': loss, 'mlm_loss':out_dict.mlm_loss, 'value_loss':out_dict.value_loss, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})
     logger.info("End training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     accelerator.end_training()
 
