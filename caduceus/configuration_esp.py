@@ -35,9 +35,14 @@ class ESPConfig(PretrainedConfig):
             bidirectional_weight_tie: bool = True,
             rcps: bool = False,
             complement_map: Optional[dict] = None,  # used for RCPSEmbedding / RCPSLMHead
+            
+            class_token_id: int = 0,
+            pad_token_id: int = 4,
             **kwargs,
     ):
         super().__init__(**kwargs)
+        self.class_token_id = class_token_id
+        self.pad_token_id = pad_token_id 
         self.d_model = d_model
         self.n_layer = n_layer
         self.vocab_size = vocab_size

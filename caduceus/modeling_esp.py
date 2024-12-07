@@ -149,12 +149,13 @@ class ESPEmbeddings(nn.Module):
             config: ESPConfig,
             device=None,
             dtype=None,
+            class_token = 0,
     ):
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
         self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, **factory_kwargs)
         self.value_encoder = nn.Linear(1, config.d_model, **factory_kwargs)
-
+        self.class_token = class_token
     def forward(self, input_ids, values):
         """
             input_ids: (batch, seqlen)
@@ -163,11 +164,13 @@ class ESPEmbeddings(nn.Module):
             Encodes values into class tokens and adds them to the standard embeddings
         """
         class_tokens = (input_ids == self.class_token).nonzero()
-        assert len(class_tokens) == len(values)
+        assert len(class_tokens) == len(values), f'{len(class_tokens) = } {len(values) = }'
         sequence_embeddings = self.word_embeddings(input_ids)
-        value_embeddings = self.value_encoder(values)
+        value_embeddings = self.value_encoder(values.unsqueeze(-1)).squeeze()
+        
         value_embeddings[values==-100] = 0 #masked values
-        sequence_embeddings[class_tokens] += value_embeddings
+        sequence_embeddings[class_tokens[:,0],class_tokens[:,1],:] += value_embeddings
+        
         return sequence_embeddings
 
 
@@ -484,8 +487,8 @@ class ESPForMaskedLM(ESPPreTrainedModel):
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-        value_hidden_states = hidden_states.view[-1, hidden_states.shape[-1]][input_ids.view[-1] == self.config.class_token_id] #flatten batch and sequence
-        value_logits = self.value_head(value_hidden_states)
+        value_hidden_states = hidden_states.view(-1, hidden_states.shape[-1])[input_ids.view(-1) == self.config.class_token_id] #flatten batch and sequence
+        value_logits = self.value_head(value_hidden_states).squeeze()
 
         loss = None
         if labels is not None:
@@ -496,6 +499,8 @@ class ESPForMaskedLM(ESPPreTrainedModel):
             #value_loss = F.l1_loss(value_logits[value_labels != -100], value_labels[value_labels!=-100])
             value_loss = F.mse_loss(value_logits[value_labels != -100], value_labels[value_labels != -100])
             loss = mlm_loss + value_loss
+
+        return loss, mlm_loss, value_loss
 
         if not return_dict:
             output = (logits,) + outputs[1:]

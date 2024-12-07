@@ -1,7 +1,7 @@
 import torch
 
 
-def mlm_getitem(data, mlm_probability=0.15, contains_eos=False, tokenizer=None, eligible_replacements=None,
+def mlm_getitem(data, mlm_probability=0.15, contains_eos=False, tokenizer=None, eligible_replacements=torch.LongTensor([6,7,8,9,10]),
                 special_tokens_mask=None, seed=0):
     """Helper method for creating MLM input / target.
 
@@ -15,9 +15,10 @@ def mlm_getitem(data, mlm_probability=0.15, contains_eos=False, tokenizer=None, 
     # We sample a few tokens in each sequence for MLM training (with probability `self.mlm_probability`)
     probability_matrix = torch.full(target.shape, mlm_probability)
     if special_tokens_mask is None:
-        special_tokens_mask = [
-            tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in target.tolist()
-        ]
+        #special_tokens_mask = [
+        #    tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in target.tolist()
+        #]
+        special_tokens_mask = tokenizer.get_special_tokens_mask(target, already_has_special_tokens=True)
         special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
     else:
         special_tokens_mask = special_tokens_mask.bool()
