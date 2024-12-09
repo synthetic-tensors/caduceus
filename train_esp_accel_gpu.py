@@ -9,7 +9,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed
 from torch.utils.data.dataloader import DataLoader
 from torch.optim import AdamW
-
+import os
 #from src.dataloaders import SequenceDataset  # TODO make registry
 import datasets
 #from accel_model import SequenceModule
@@ -29,6 +29,7 @@ def collate_fn(batch, mlm_probability=0.15):
     seq_ids, seq_targets, expr_values, expr_targets = [], [], [], []
     for sample in batch:
         input_ids, input_vals, sgrna = sample['input_ids'], sample['input_vals'], sample['sgrna']
+        #print(dist.get_rank(),sgrna)
         seq_id, seq_target = mlm_getitem(
             input_ids,
                 mlm_probability=mlm_probability,
@@ -77,15 +78,17 @@ def main(config: OmegaConf):
     dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch').train_test_split(0.1)
     train_dl = DataLoader(
                 dataset['train'],
-                batch_size=2, #batch_size,
+                batch_size=1, #batch_size,
                 shuffle=False,
                 #sampler=sampler,
                 collate_fn=collate_fn,
                 #**kwargs,
+                num_workers=8,
+                prefetch_factor=8,
                 )
     val_dl = DataLoader(
                 dataset['test'],
-                batch_size=2, #batch_size,
+                batch_size=1, #batch_size,
                 shuffle=False,
                 #sampler=sampler,
                 collate_fn = collate_fn,
@@ -106,7 +109,7 @@ def main(config: OmegaConf):
     #accelerator.print(f"Number of non-embedding parameters: {config.n_params_nonemb/10**6}M")
     #accelerator.print(f"Number of training batches per epoch: {len(train_dl)}")
 
-    num_training_steps = len(train_dl)
+    num_training_steps = len(train_dl) * 10
 
     # Set zero weight decay for some params
     #if 'optimizer_param_grouping' in model.hparams.train:
@@ -127,11 +130,11 @@ def main(config: OmegaConf):
 
     # Start model training and defining the training loop
     model.train()
-    for epoch in range(0,1):
+    for epoch in range(0,10):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
             d = {k:v.shape for k,v in batch.items()}
-            print(f'{dist.get_rank()} - {d}')
+            #print(f'{dist.get_rank()} - {d}')
             if dist.get_world_size() > 1:
                 #loss = model.module._shared_step(batch, batch_idx, prefix="train")
                 output = model(**batch, return_dict=True)
@@ -145,6 +148,7 @@ def main(config: OmegaConf):
             if accelerator.is_main_process:
                 progress_bar.update(1)
             accelerator.log({'loss': loss, 'mlm_loss':mlm_loss, 'value_loss':value_loss, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})
+        accelerator.save_state(os.path.join('test_model',str(epoch)))
     logger.info("End training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     accelerator.end_training()
 

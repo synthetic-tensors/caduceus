@@ -14,9 +14,9 @@ class ESPConfig(PretrainedConfig):
     def __init__(
             self,
             # From original MambaConfig
-            d_model: int = 2560,
-            n_layer: int = 64,
-            vocab_size: int = 50277,
+            d_model: int = 128,
+            n_layer: int = 12,
+            vocab_size: int = 10,
             ssm_cfg: Optional[dict] = None,
             rms_norm: bool = True,
             residual_in_fp32: bool = True,
