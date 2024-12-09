@@ -150,12 +150,15 @@ class ESPEmbeddings(nn.Module):
             device=None,
             dtype=None,
             class_token = 0,
+            xval = True,
     ):
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
         self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, **factory_kwargs)
-        self.value_encoder = nn.Linear(1, config.d_model, **factory_kwargs)
+        if not self.xval:
+            self.value_encoder = nn.Linear(1, config.d_model, **factory_kwargs)
         self.class_token = class_token
+        self.xval = xval
     def forward(self, input_ids, values):
         """
             input_ids: (batch, seqlen)
@@ -166,11 +169,12 @@ class ESPEmbeddings(nn.Module):
         class_tokens = (input_ids == self.class_token).nonzero()
         assert len(class_tokens) == len(values), f'{len(class_tokens) = } {len(values) = }'
         sequence_embeddings = self.word_embeddings(input_ids)
-        value_embeddings = self.value_encoder(values.unsqueeze(-1)).squeeze()
-        
-        value_embeddings[values==-100] = 0 #masked values
-        sequence_embeddings[class_tokens[:,0],class_tokens[:,1],:] += value_embeddings
-        
+        if not self.xval:
+            value_embeddings = self.value_encoder(values.unsqueeze(-1)).squeeze()
+            value_embeddings[values==-100] = 0 #masked values
+            sequence_embeddings[class_tokens[:,0], class_tokens[:,1],:] += value_embeddings
+        else:
+            sequence_embeddings[class_tokens[:,0], class_tokens[:,1],:] *= values.repeat(1,1,sequence_embeddings.shape[2])
         return sequence_embeddings
 
 
