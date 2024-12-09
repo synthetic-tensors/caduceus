@@ -67,13 +67,13 @@ def main(config: OmegaConf):
 
     config = utils.train.process_config(config)
     utils.train.print_config(config, resolve=True)
-
+    print(config.keys())
+    exit()
     if config.train.seed is not None:
-        set_seed(42) #config.train.seed)
+        set_seed(config.train.seed)
     model_config = ESPConfig(**config.model.config)
     model = ESPForMaskedLM(model_config)
     print(model)
-    #print(model_config)
 
     # Dataset arguments
     #print(SequenceDataset.registry.keys())
@@ -82,12 +82,12 @@ def main(config: OmegaConf):
     #)
     local_rank = dist.get_rank()
     print(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}')
-    dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch')\
+    dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch')
     dataset = dataset.map(clip_min_max_norm)
     dataset = dataset.train_test_split(0.1)
     train_dl = DataLoader(
                 dataset['train'],
-                batch_size=1, #batch_size,
+                batch_size=config.dataset.batch_size, #batch_size,
                 shuffle=False,
                 #sampler=sampler,
                 collate_fn=collate_fn,
@@ -97,7 +97,7 @@ def main(config: OmegaConf):
                 )
     val_dl = DataLoader(
                 dataset['test'],
-                batch_size=1, #batch_size,
+                batch_size=config.dataset.batch_size, #batch_size,
                 shuffle=False,
                 #sampler=sampler,
                 collate_fn = collate_fn,
@@ -128,7 +128,7 @@ def main(config: OmegaConf):
     #params = [p for p in all_params if not hasattr(p, "_optim")]
     #optimizer = utils.instantiate(registry.optimizer, model.hparams.optimizer, params)
     #del model.hparams.optimizer._name_
-    optimizer = AdamW(model.parameters(), lr=0.0001)
+    optimizer = AdamW(model.parameters(), lr=config.optimizer.lr)
     logger.info("Start training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     #model, optimizer, train_dl, eval_dl, lr_scheduler = accelerator.prepare(
     #     model, optimizer, train_dl, eval_dl, lr_scheduler
