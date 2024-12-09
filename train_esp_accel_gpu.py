@@ -25,6 +25,13 @@ from src.dataloaders.utils.mlm import mlm_esp_getitem, mlm_getitem
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def clip_min_max_norm(example, upper_lim=10, lower_lim=5):
+    data = example["input_vals"]
+    data[data < lower_lim] = lower_lim
+    data[data > upper_lim] = upper_lim
+    example['input_vals'] = (data - lower_lim)/(upper_lim-lower_lim)
+    return example
+
 def collate_fn(batch, mlm_probability=0.15):
     seq_ids, seq_targets, expr_values, expr_targets = [], [], [], []
     for sample in batch:
@@ -75,7 +82,9 @@ def main(config: OmegaConf):
     #)
     local_rank = dist.get_rank()
     print(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}')
-    dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch').train_test_split(0.1)
+    dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch')\
+    dataset = dataset.map(clip_min_max_norm)
+    dataset = dataset.train_test_split(0.1)
     train_dl = DataLoader(
                 dataset['train'],
                 batch_size=1, #batch_size,
