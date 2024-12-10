@@ -147,27 +147,37 @@ def main(config: OmegaConf):
     if config.trainer.restart:
         logger.info(f"Loading saved state from {config.trainer.restart}")
         accelerator.load_state(config.trainer.restart)
-    for epoch in range(0,10):
+    accumulation_steps = config.train.global_batch_size
+    for epoch in range(0, 10):
         model.train()
+        acc_loss, acc_mlm_loss, acc_value_loss = 0.0, 0.0, 0.0
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
-            #d = {k:v.shape for k,v in batch.items()}
-            #print(f'{dist.get_rank()} - {d}')
             if dist.get_world_size() > 1:
-                #loss = model.module._shared_step(batch, batch_idx, prefix="train")
                 output = model(**batch, return_dict=True)
                 loss, mlm_loss, value_loss = output
             else:
-                #loss = model._shared_step(batch, batch_idx, prefix="train")
+                # loss = model._shared_step(batch, batch_idx, prefix="train")
                 raise Exception("need distributed")
-            accelerator.backward(loss)
-            accelerator.clip_grad_norm_(model.parameters, 1.0)
-            optimizer.step()
-            #lr_scheduler.step()
-            if accelerator.is_main_process:
-                progress_bar.update(1)
-            accelerator.log({'loss': loss, 'mlm_loss':mlm_loss, 'value_loss':value_loss, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})
-        accelerator.save_state(os.path.join('test_model',str(epoch)))
+            # Backward pass
+            accelerator.backward(loss / accumulation_steps)
+            acc_loss += loss
+            acc_mlm_loss += mlm_loss
+            acc_value_loss += value_loss
+            if (batch_idx + 1) % accumulation_steps == 0
+                accelerator.clip_grad_norm_(model.parameters, 1.0)
+                # Update parameters
+                optimizer.step()
+                # lr_scheduler.step()
+                if accelerator.is_main_process:
+                    progress_bar.update(accumulation_steps)
+                    accelerator.log(
+                        {'loss': acc_loss / accumulation_steps, 'mlm_loss': acc_mlm_loss / accumulation_steps,
+                         'value_loss': acc_value_loss / accumulation_steps, 'grad_norm': get_grad_norm(model),
+                         'param_norm': get_param_norm(model)})
+                optimizer.zero_grad()
+                acc_loss, acc_mlm_loss, acc_value_loss = 0.0, 0.0, 0.0
+        accelerator.save_state(os.path.join('ft_model',str(epoch)))
         model.eval()
         with torch.no_grad():
             total_val_loss=[]
