@@ -67,8 +67,6 @@ def main(config: OmegaConf):
 
     config = utils.train.process_config(config)
     utils.train.print_config(config, resolve=True)
-    print(config.keys())
-    exit()
     if config.train.seed is not None:
         set_seed(config.train.seed)
     model_config = ESPConfig(**config.model.config)
@@ -81,8 +79,8 @@ def main(config: OmegaConf):
     #    **config.dataset
     #)
     local_rank = dist.get_rank()
-    print(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}')
-    dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch')
+    #print(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}')
+    dataset = datasets.load_from_disk(os.path.join(config.dataset.path,f'gpu_{local_rank}')).with_format('torch')
     dataset = dataset.map(clip_min_max_norm)
     dataset = dataset.train_test_split(0.1)
     train_dl = DataLoader(
@@ -138,8 +136,10 @@ def main(config: OmegaConf):
         progress_bar = tqdm(range(num_training_steps), initial = 0 * len(train_dl))
 
     # Start model training and defining the training loop
+    accumulation_steps = config.train.global_batch_size
     model.train()
     for epoch in range(0,10):
+        acc_loss, acc_mlm_loss, acc_value_loss = 0.0,0.0,0.0
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
             d = {k:v.shape for k,v in batch.items()}
@@ -151,12 +151,20 @@ def main(config: OmegaConf):
             else:
                 #loss = model._shared_step(batch, batch_idx, prefix="train")
                 raise Exception("need distributed")
-            accelerator.backward(loss)
-            optimizer.step()
-            #lr_scheduler.step()
-            if accelerator.is_main_process:
-                progress_bar.update(1)
-            accelerator.log({'loss': loss, 'mlm_loss':mlm_loss, 'value_loss':value_loss, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})
+            # Backward pass
+            accelerator.backward(loss / accumulation_steps)
+            acc_loss += loss
+            acc_mlm_loss += mlm_loss
+            acc_value_loss += value_loss
+            if (batch_idx + 1) % accumulation_steps == 0:
+                # Update parameters
+                optimizer.step()
+                #lr_scheduler.step()
+                if accelerator.is_main_process:
+                    progress_bar.update(accumulation_steps)
+                    accelerator.log({'loss': acc_loss/accumulation_steps, 'mlm_loss':acc_mlm_loss/accumulation_steps, 'value_loss':acc_value_loss/accumulation_steps, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})
+                optimizer.zero_grad()
+                acc_loss, acc_mlm_loss, acc_value_loss = 0.0,0.0,0.0
         accelerator.save_state(os.path.join('test_model',str(epoch)))
     logger.info("End training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     accelerator.end_training()

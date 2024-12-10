@@ -150,15 +150,17 @@ class ESPEmbeddings(nn.Module):
             device=None,
             dtype=None,
             class_token = 0,
+            mask_token = 3,
             xval = True,
     ):
         super().__init__()
         factory_kwargs = {"device": device, "dtype": dtype}
         self.word_embeddings = nn.Embedding(config.vocab_size, config.d_model, **factory_kwargs)
+        self.xval = xval
         if not self.xval:
             self.value_encoder = nn.Linear(1, config.d_model, **factory_kwargs)
         self.class_token = class_token
-        self.xval = xval
+        self.mask_token = mask_token
     def forward(self, input_ids, values):
         """
             input_ids: (batch, seqlen)
@@ -167,15 +169,26 @@ class ESPEmbeddings(nn.Module):
             Encodes values into class tokens and adds them to the standard embeddings
         """
         class_tokens = (input_ids == self.class_token).nonzero()
-        assert len(class_tokens) == len(values), f'{len(class_tokens) = } {len(values) = }'
+        if self.xval: #Maksed values are mask tokens for xval
+            masked_class_tokens = class_tokens[values == -100]
+            input_ids[masked_class_tokens[:,0],masked_class_tokens[:,1]]=self.mask_token
+            class_tokens = class_tokens[values != -100]
+            assert len(class_tokens) == len(values[values != -100])
+        else:
+            assert len(class_tokens) == len(values), f'{len(class_tokens) = } {len(values) = }'
+    
         sequence_embeddings = self.word_embeddings(input_ids)
+        
         if not self.xval:
             value_embeddings = self.value_encoder(values.unsqueeze(-1)).squeeze()
             value_embeddings[values==-100] = 0 #masked values
             sequence_embeddings[class_tokens[:,0], class_tokens[:,1],:] += value_embeddings
+            return sequence_embeddings
         else:
-            sequence_embeddings[class_tokens[:,0], class_tokens[:,1],:] *= values.repeat(1,1,sequence_embeddings.shape[2])
-        return sequence_embeddings
+            value_embeddings = values[values!=-100].unsqueeze(1).repeat(1,sequence_embeddings.shape[2])
+            sequence_embeddings[class_tokens[:,0], class_tokens[:,1],:] *= value_embeddings
+            #input_ids[masked_class_tokens[:,0],masked_class_tokens[:,1]]=self.class_token
+            return sequence_embeddings, masked_class_tokens
 
 
 class ESPMixerModel(nn.Module):
@@ -234,7 +247,7 @@ class ESPMixerModel(nn.Module):
         if inputs_embeds is not None:
             hidden_states = inputs_embeds
         else:
-            hidden_states = self.embeddings(input_ids, values)
+            hidden_states, masked_class_tokens = self.embeddings(input_ids, values)
         
         #print(dist.get_rank(),dist.get_world_size())
         #print(dist.is_initialized())
@@ -293,7 +306,7 @@ class ESPMixerModel(nn.Module):
                 )
             if output_hidden_states:
                 all_hidden_states.append(hidden_states)
-        return hidden_states, all_hidden_states
+        return hidden_states, all_hidden_states, masked_class_tokens
 
 
 def cross_entropy(logits, y, ignore_index=-100):
@@ -394,7 +407,7 @@ class ESP(ESPPreTrainedModel):
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        hidden_states, all_hidden_states = self.backbone(
+        hidden_states, all_hidden_states, masked_class_tokens = self.backbone(
             input_ids,
             values,
             inputs_embeds=inputs_embeds,
@@ -404,11 +417,11 @@ class ESP(ESPPreTrainedModel):
             return BaseModelOutputWithNoAttention(
                 last_hidden_state=hidden_states,
                 hidden_states=all_hidden_states if output_hidden_states else None
-            )
+            ), masked_class_tokens
         elif output_hidden_states:
-            return hidden_states, all_hidden_states
+            return hidden_states, all_hidden_states, masked_class_tokens
         else:
-            return hidden_states
+            return hidden_states, masked_class_tokens
 
 
 class ESPForMaskedLM(ESPPreTrainedModel):
@@ -478,9 +491,8 @@ class ESPForMaskedLM(ESPPreTrainedModel):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        outputs = self.ESP(
+        outputs, masked_class_tokens = self.ESP(
             input_ids=input_ids,
             values=values,
             inputs_embeds=inputs_embeds,
@@ -491,9 +503,13 @@ class ESPForMaskedLM(ESPPreTrainedModel):
         hidden_states = outputs[0]
         logits = self.lm_head(hidden_states)
         logits = logits.float()
-        value_hidden_states = hidden_states.view(-1, hidden_states.shape[-1])[input_ids.view(-1) == self.config.class_token_id] #flatten batch and sequence
-        value_logits = self.value_head(value_hidden_states).squeeze()
 
+        #value_hidden_states = hidden_states.view(-1, hidden_states.shape[-1])[input_ids.view(-1) == self.config.class_token_id] #flatten batch and sequence
+        value_hidden_states = hidden_states[masked_class_tokens[:,0],masked_class_tokens[:,1],:].view(-1, hidden_states.shape[-1])
+        #flattened_indices = masked_class_tokens[:,0]*hidden_states.shape[0] + masked_class_tokens[1]
+        #value_hidden_states = value_hidden_states[flattened_indices]
+        #print(f"{value_hidden_states.shape = }")
+        value_logits = self.value_head(value_hidden_states).squeeze()
         loss = None
         if labels is not None:
             if loss_weights is not None:
@@ -501,7 +517,8 @@ class ESPForMaskedLM(ESPPreTrainedModel):
             else:
                 mlm_loss = cross_entropy(logits, labels, ignore_index=self.config.pad_token_id)
             #value_loss = F.l1_loss(value_logits[value_labels != -100], value_labels[value_labels!=-100])
-            value_loss = F.mse_loss(value_logits[value_labels != -100], value_labels[value_labels != -100])
+            #value_loss = F.mse_loss(value_logits[value_labels != -100], value_labels[value_labels != -100])
+            value_loss = F.mse_loss(value_logits, value_labels[value_labels != -100])
             loss = mlm_loss + value_loss
 
         return loss, mlm_loss, value_loss
