@@ -516,10 +516,15 @@ class ESPForMaskedLM(ESPPreTrainedModel):
                 mlm_loss = weighted_cross_entropy(logits, labels, loss_weights, ignore_index=self.config.pad_token_id)
             else:
                 mlm_loss = cross_entropy(logits, labels, ignore_index=self.config.pad_token_id)
+        else:
+            mlm_loss = 0.0
+        if value_labels is not None:
             #value_loss = F.l1_loss(value_logits[value_labels != -100], value_labels[value_labels!=-100])
             #value_loss = F.mse_loss(value_logits[value_labels != -100], value_labels[value_labels != -100])
             value_loss = F.mse_loss(value_logits, value_labels[value_labels != -100])
             loss = mlm_loss + value_loss
+        else:
+            value_loss = 0.0
 
         return loss, mlm_loss, value_loss
 
@@ -555,9 +560,6 @@ class ESPForSequenceClassification(ESPPreTrainedModel):
         self.ESP = ESP(config, **factory_kwargs, **kwargs)
         self.score = nn.Linear(config.d_model, self.num_labels, bias=False)
 
-        self.conjoin_train = conjoin_train
-        self.conjoin_eval = conjoin_eval
-
         # Initialize weights and apply final processing
         self.post_init()
         self.init_scorer()
@@ -589,8 +591,11 @@ class ESPForSequenceClassification(ESPPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
+        values: torch.FloatTensor = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
         labels: Optional[torch.LongTensor] = None,
+        value_labels: Optional[torch.FloatTensor] = None,
+        loss_weights: Optional[torch.FloatTensor] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, SequenceClassifierOutput]:
@@ -603,55 +608,19 @@ class ESPForSequenceClassification(ESPPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         # Get hidden representations from the backbone
-        if self.config.rcps:  # Hidden states have 2 * d_model channels for RCPS
-            transformer_outputs = self.ESP(
-                input_ids,
-                inputs_embeds=inputs_embeds,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
-            hidden_states = torch.stack(
-                [
-                    transformer_outputs[0][..., :self.config.d_model],
-                    torch.flip(transformer_outputs[0][..., self.config.d_model:], dims=[1, 2])
-                 ],
-                dim=-1
-            )
-        elif self.conjoin_train or (self.conjoin_eval and not self.training):  # For conjoining / post-hoc conjoining
-            assert input_ids is not None, "`input_ids` must be provided for conjoining."
-            assert input_ids.ndim == 3, "`input_ids` must be 3D tensor: channels corresponds to forward and rc strands."
-            transformer_outputs = self.ESP(
-                input_ids[..., 0],
-                inputs_embeds=None,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
-            transformer_outputs_rc = self.ESP(
-                input_ids[..., 1],
-                inputs_embeds=None,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
-            # Stack along channel dimension (dim=-1)
-            hidden_states = torch.stack([transformer_outputs[0], transformer_outputs_rc[0]], dim=-1)
-        else:
-            transformer_outputs = self.ESP(
-                input_ids,
-                inputs_embeds=None,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
-            hidden_states = transformer_outputs[0]
+        transformer_outputs = self.ESP(
+            input_ids=input_ids,
+            values=values,
+            inputs_embeds=inputs_embeds,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        hidden_states = transformer_outputs[0]
+
 
         # Pool and get logits
         pooled_hidden_states = self.pool_hidden_states(hidden_states)
-        # Potentially run `score` twice (with parameters shared) for conjoining
-        if hidden_states.ndim == 4:  # bsz, seq_len, hidden_dim, 2 where last channel has the stacked fwd and rc reps
-            logits_fwd = self.score(pooled_hidden_states[..., 0])
-            logits_rc = self.score(pooled_hidden_states[..., 1])
-            logits = (logits_fwd + logits_rc) / 2
-        else:
-            logits = self.score(pooled_hidden_states)
+        logits = self.score(pooled_hidden_states)
 
         loss = None
         if labels is not None:
