@@ -59,6 +59,7 @@ def collate_fn(batch, mlm_probability=0.15):
 
 @hydra.main(config_path="configs", config_name="config.yaml")
 def main(config: OmegaConf):
+    print(torch.backends.cudnn.allow_tf32)
     #from accelerate import DistributedDataParallelKwargs
     #ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False) #True)
     #accelerator = Accelerator(kwargs_handlers=[ddp_kwargs], log_with="wandb")

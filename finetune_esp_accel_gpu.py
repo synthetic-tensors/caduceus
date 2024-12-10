@@ -36,7 +36,7 @@ def collate_fn(batch, mlm_probability=0.15, sep_token=1):
     seq_ids, seq_targets, expr_values, expr_targets = [], [], [], []
     for sample in batch:
         input_ids, input_vals, sgrna = sample['input_ids'], sample['input_vals'], sample['sgrna']
-        seq_id = torch.cat([sgrna, input_ids, sgrna.flip(1)], dim=1)
+        seq_id = torch.cat([sgrna, input_ids, sgrna.flip(0)])
         expr_value, expr_target = mlm_esp_getitem(
             input_vals,
             mlm_probability=1.0, #Makes them all mask tokens
@@ -66,9 +66,9 @@ def main(config: OmegaConf):
     model_config = ESPConfig(**config.model.config)
     model = ESPForMaskedLM(model_config)
 
-    freeze_layers = 7
+    freeze_layers = config.model.config.freeze_n_layers
     if freeze_layers > 0:
-        logging.info(f"Freezing {freeze_layers} layers")
+        print(f"Freezing {freeze_layers} layers")
         modules_to_freeze = [model.ESP.backbone.embeddings.word_embeddings,
                              model.ESP.backbone.layers[:freeze_layers]]
         for module in modules_to_freeze:
@@ -85,12 +85,12 @@ def main(config: OmegaConf):
     #)
     local_rank = dist.get_rank()
     print(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}')
-    dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch')\
+    dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch')
     dataset = dataset.map(clip_min_max_norm)
     dataset = dataset.train_test_split(0.1)
     train_dl = DataLoader(
                 dataset['train'],
-                batch_size=1, #batch_size,
+                batch_size=config.dataset.batch_size,
                 shuffle=False,
                 #sampler=sampler,
                 collate_fn=collate_fn,
@@ -100,7 +100,7 @@ def main(config: OmegaConf):
                 )
     val_dl = DataLoader(
                 dataset['test'],
-                batch_size=1, #batch_size,
+                batch_size=config.dataset.batch_size,
                 shuffle=False,
                 #sampler=sampler,
                 collate_fn = collate_fn,
@@ -144,8 +144,11 @@ def main(config: OmegaConf):
         progress_bar = tqdm(range(num_training_steps), initial = 0 * len(train_dl))
 
     # Start model training and defining the training loop
-    model.train()
+    if config.trainer.restart:
+        logger.info(f"Loading saved state from {config.trainer.restart}")
+        accelerator.load_state(config.trainer.restart)
     for epoch in range(0,10):
+        model.train()
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
             #d = {k:v.shape for k,v in batch.items()}
@@ -158,6 +161,7 @@ def main(config: OmegaConf):
                 #loss = model._shared_step(batch, batch_idx, prefix="train")
                 raise Exception("need distributed")
             accelerator.backward(loss)
+            accelerator.clip_grad_norm_(model.parameters, 1.0)
             optimizer.step()
             #lr_scheduler.step()
             if accelerator.is_main_process:
