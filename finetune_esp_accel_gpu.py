@@ -65,6 +65,16 @@ def main(config: OmegaConf):
         set_seed(42) #config.train.seed)
     model_config = ESPConfig(**config.model.config)
     model = ESPForMaskedLM(model_config)
+
+    freeze_layers = 7
+    if freeze_layers > 0:
+        logging.info(f"Freezing {freeze_layers} layers")
+        modules_to_freeze = [model.ESP.backbone.embeddings.word_embeddings,
+                             model.ESP.backbone.layers[:freeze_layers]]
+        for module in modules_to_freeze:
+            for param in module.parameters():
+                param.requires_grad = False
+
     print(model)
     #print(model_config)
 
@@ -128,6 +138,7 @@ def main(config: OmegaConf):
     #model, optimizer, train_dl, eval_dl, lr_scheduler = accelerator.prepare(
     #     model, optimizer, train_dl, eval_dl, lr_scheduler
     #     )
+
     model, optimizer = accelerator.prepare(model, optimizer)
     if accelerator.is_main_process:
         progress_bar = tqdm(range(num_training_steps), initial = 0 * len(train_dl))
@@ -137,7 +148,7 @@ def main(config: OmegaConf):
     for epoch in range(0,10):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
-            d = {k:v.shape for k,v in batch.items()}
+            #d = {k:v.shape for k,v in batch.items()}
             #print(f'{dist.get_rank()} - {d}')
             if dist.get_world_size() > 1:
                 #loss = model.module._shared_step(batch, batch_idx, prefix="train")
@@ -153,6 +164,16 @@ def main(config: OmegaConf):
                 progress_bar.update(1)
             accelerator.log({'loss': loss, 'mlm_loss':mlm_loss, 'value_loss':value_loss, 'grad_norm':get_grad_norm(model),'param_norm':get_param_norm(model)})
         accelerator.save_state(os.path.join('test_model',str(epoch)))
+        model.eval()
+        with torch.no_grad():
+            total_val_loss=[]
+            for batch_idx, batch in tqdm(enumerate(val_dl)):
+                output = model(**batch, return_dict=True)
+                loss, mlm_loss, value_loss = output
+                total_val_loss.append(loss)
+                accelerator.log({'val_loss': loss})
+            accelerator.log({'val_epoch_loss': torch.cat(total_val_loss).mean()})
+
     logger.info("End training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     accelerator.end_training()
 
