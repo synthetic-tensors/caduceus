@@ -137,7 +137,7 @@ def main(config: OmegaConf):
     world_size = torch.cuda.device_count()
     #print(world_size)
     #print(train_dl.sampler)
-    for epoch in range(0,1):
+    for epoch in range(0,config.training.num_epochs):
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
             #print(f'forward on {dist.get_rank()}')

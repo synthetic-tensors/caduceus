@@ -100,7 +100,7 @@ def main(config: OmegaConf):
                 )
     val_dl = DataLoader(
                 dataset['test'],
-                batch_size=config.dataset.batch_size,
+                batch_size=2*config.dataset.batch_size,
                 shuffle=False,
                 #sampler=sampler,
                 collate_fn = collate_fn,
@@ -133,7 +133,7 @@ def main(config: OmegaConf):
     #params = [p for p in all_params if not hasattr(p, "_optim")]
     #optimizer = utils.instantiate(registry.optimizer, model.hparams.optimizer, params)
     #del model.hparams.optimizer._name_
-    optimizer = AdamW(model.parameters(), lr=0.0001)
+    optimizer = AdamW(model.parameters(), lr=0.0001, weight_decay=0.0)
     logger.info("Start training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     #model, optimizer, train_dl, eval_dl, lr_scheduler = accelerator.prepare(
     #     model, optimizer, train_dl, eval_dl, lr_scheduler
@@ -148,7 +148,9 @@ def main(config: OmegaConf):
         logger.info(f"Loading saved state from {config.trainer.restart}")
         accelerator.load_state(config.trainer.restart)
     accumulation_steps = config.train.global_batch_size
-    for epoch in range(0, 10):
+    save_preds = config.trainer.save_preds
+    for epoch in range(0, config.trainer.max_epochs):
+        """
         model.train()
         acc_loss, acc_mlm_loss, acc_value_loss = 0.0, 0.0, 0.0
         for batch_idx, batch in tqdm(enumerate(train_dl)):
@@ -164,8 +166,8 @@ def main(config: OmegaConf):
             acc_loss += loss
             acc_mlm_loss += mlm_loss
             acc_value_loss += value_loss
-            if (batch_idx + 1) % accumulation_steps == 0
-                accelerator.clip_grad_norm_(model.parameters, 1.0)
+            if (batch_idx + 1) % accumulation_steps == 0:
+                accelerator.clip_grad_norm_(model.parameters(), 1.0)
                 # Update parameters
                 optimizer.step()
                 # lr_scheduler.step()
@@ -178,15 +180,22 @@ def main(config: OmegaConf):
                 optimizer.zero_grad()
                 acc_loss, acc_mlm_loss, acc_value_loss = 0.0, 0.0, 0.0
         accelerator.save_state(os.path.join('ft_model',str(epoch)))
+        """
         model.eval()
         with torch.no_grad():
             total_val_loss=[]
+            all_logits, all_labels = [], []
             for batch_idx, batch in tqdm(enumerate(val_dl)):
-                output = model(**batch, return_dict=True)
-                loss, mlm_loss, value_loss = output
+                loss, mlm_loss, value_loss, value_logits, value_labels = model(**batch, return_dict=True)
                 total_val_loss.append(loss)
+                if save_preds:
+                    all_logits.append(value_logits.cpu())
+                    all_labels.append(value_labels.cpu())
                 accelerator.log({'val_loss': loss})
-            accelerator.log({'val_epoch_loss': torch.cat(total_val_loss).mean()})
+            torch.save(all_logits,os.path.join(f'val_preds_{str(epoch)}_gpu{dist.get_rank()}_logits.pt'))
+            torch.save(all_labels,os.path.join(f'val_labels_{str(epoch)}_gpu{dist.get_rank()}_labels.pt'))
+            accelerator.log({'val_epoch_loss': sum(total_val_loss)/len(val_dl)})
+
 
     logger.info("End training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     accelerator.end_training()

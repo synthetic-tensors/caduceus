@@ -521,15 +521,15 @@ class ESPForMaskedLM(ESPPreTrainedModel):
         if value_labels is not None:
             #value_loss = F.l1_loss(value_logits[value_labels != -100], value_labels[value_labels!=-100])
             #value_loss = F.mse_loss(value_logits[value_labels != -100], value_labels[value_labels != -100])
-            value_loss = F.mse_loss(value_logits, value_labels[value_labels != -100])
-            loss = mlm_loss + value_loss
+            value_loss = F.mse_loss(F.sigmoid(value_logits), value_labels[value_labels != -100])
+            loss = mlm_loss + 100.0*value_loss
         else:
             value_loss = 0.0
-
-        return loss, mlm_loss, value_loss
-
+        
+        return loss, mlm_loss, value_loss, value_logits, value_labels
+        
         if not return_dict:
-            output = (logits,) + outputs[1:]
+            output = (value_logits, value_labels, )
             return (loss, mlm_loss, value_loss) + output if loss is not None else output
 
         return MaskedLMOutput(
