@@ -87,6 +87,7 @@ def main(config: OmegaConf):
     print(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}')
     dataset = datasets.load_from_disk(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}').with_format('torch')
     dataset = dataset.map(clip_min_max_norm)
+    print(f"Dataset first row vals = {dataset[0]['input_vals']}")
     dataset = dataset.train_test_split(0.1)
     train_dl = DataLoader(
                 dataset['train'],
