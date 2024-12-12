@@ -25,7 +25,7 @@ from src.dataloaders.utils.mlm import mlm_esp_getitem, mlm_getitem
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def clip_min_max_norm(example, upper_lim=10, lower_lim=5):
+def clip_min_max_norm(example, upper_lim=10, lower_lim=-5):
     data = example["input_vals"]
     data[data < lower_lim] = lower_lim
     data[data > upper_lim] = upper_lim
@@ -150,14 +150,13 @@ def main(config: OmegaConf):
     accumulation_steps = config.train.global_batch_size
     save_preds = config.trainer.save_preds
     for epoch in range(0, config.trainer.max_epochs):
-        """
         model.train()
         acc_loss, acc_mlm_loss, acc_value_loss = 0.0, 0.0, 0.0
         for batch_idx, batch in tqdm(enumerate(train_dl)):
             # Training
             if dist.get_world_size() > 1:
                 output = model(**batch, return_dict=True)
-                loss, mlm_loss, value_loss = output
+                loss, mlm_loss, value_loss, _, _ = output
             else:
                 # loss = model._shared_step(batch, batch_idx, prefix="train")
                 raise Exception("need distributed")
@@ -180,7 +179,6 @@ def main(config: OmegaConf):
                 optimizer.zero_grad()
                 acc_loss, acc_mlm_loss, acc_value_loss = 0.0, 0.0, 0.0
         accelerator.save_state(os.path.join('ft_model',str(epoch)))
-        """
         model.eval()
         with torch.no_grad():
             total_val_loss=[]
