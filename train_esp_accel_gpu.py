@@ -80,9 +80,8 @@ def main(config: OmegaConf):
     #    **config.dataset
     #)
     local_rank = dist.get_rank()
-    #print(f'/home/ubuntu/josiah-fs1/caduceus/dataset_bulk_exp23_8gpu/gpu_{local_rank}')
     dataset = datasets.load_from_disk(os.path.join(config.dataset.path,f'gpu_{local_rank}')).with_format('torch')
-    dataset = dataset.map(clip_min_max_norm)
+    dataset = dataset.map(partial(clip_min_max_norm, lower_lim=config.dataset.lower_lim, upper_lim=config.dataset.upper_lim))
     dataset = dataset.train_test_split(0.1)
     train_dl = DataLoader(
                 dataset['train'],
