@@ -4,6 +4,7 @@ from tqdm.auto import tqdm
 import torch
 import torch.distributed as dist
 #from utils.training import count_parameters #, move_to
+from functools import partial
 import hydra
 from accelerate import Accelerator
 from accelerate.utils import set_seed
@@ -116,7 +117,7 @@ def main(config: OmegaConf):
     #accelerator.print(f"Number of non-embedding parameters: {config.n_params_nonemb/10**6}M")
     #accelerator.print(f"Number of training batches per epoch: {len(train_dl)}")
 
-    num_training_steps = len(train_dl) * 10
+    num_training_steps = len(train_dl) * self.trainer.max_epochs
 
     # Set zero weight decay for some params
     #if 'optimizer_param_grouping' in model.hparams.train:

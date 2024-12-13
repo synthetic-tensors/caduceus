@@ -1,8 +1,11 @@
 import logging
 from time import gmtime, strftime
 from tqdm.auto import tqdm
+from functools import partial
 import torch
 import torch.distributed as dist
+from torchmetrics.functional.regression import pearson_corrcoef
+from torchmetrics.regression import PearsonCorrCoef
 #from utils.training import count_parameters #, move_to
 import hydra
 from accelerate import Accelerator
@@ -24,6 +27,7 @@ from omegaconf import OmegaConf
 from src.dataloaders.utils.mlm import mlm_esp_getitem, mlm_getitem
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 def clip_min_max_norm(example, upper_lim=10, lower_lim=-5):
     data = example["input_vals"]
@@ -57,6 +61,7 @@ def main(config: OmegaConf):
     #accelerator = Accelerator(kwargs_handlers=[ddp_kwargs], log_with="wandb")
     accelerator = Accelerator(log_with="wandb")
     device = accelerator.device
+    pcc = PearsonCorrCoef().to(device)
 
     config = utils.train.process_config(config)
     utils.train.print_config(config, resolve=True)
@@ -85,9 +90,9 @@ def main(config: OmegaConf):
     #)
     local_rank = dist.get_rank()
     dataset = datasets.load_from_disk(os.path.join(config.dataset.path,f'gpu_{local_rank}')).with_format('torch')
-    dataset = dataset.map(partial(clip_min_max_norm, lower_lim=config.dataset.lower_lim, upper_lim=config.dataset.upper_lim))
+    dataset = dataset.map(partial(clip_min_max_norm, lower_lim=config.dataset.lower_lim, upper_lim=config.dataset.upper_lim),num_proc=8)
+    print(dataset[0]['input_vals'])
     dataset = dataset.train_test_split(0.1)
-    print(f"Dataset first row vals = {dataset[0]['input_vals']}")
     train_dl = DataLoader(
                 dataset['train'],
                 batch_size=config.dataset.batch_size,
@@ -190,9 +195,11 @@ def main(config: OmegaConf):
                     all_logits.append(value_logits.cpu())
                     all_labels.append(value_labels.cpu())
                 accelerator.log({'val_loss': loss})
+                pcc.update(value_logits,value_labels)  
             torch.save(all_logits,os.path.join(f'val_preds_{str(epoch)}_gpu{dist.get_rank()}_logits.pt'))
             torch.save(all_labels,os.path.join(f'val_labels_{str(epoch)}_gpu{dist.get_rank()}_labels.pt'))
-            accelerator.log({'val_epoch_loss': sum(total_val_loss)/len(val_dl)})
+            accelerator.log({'val_epoch_loss': sum(total_val_loss)/len(val_dl), 'val_epoch_pcc': pcc.compute().cpu()})
+            pcc.reset()
 
 
     logger.info("End training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
