@@ -127,7 +127,7 @@ def main(config: OmegaConf):
     #params = [p for p in all_params if not hasattr(p, "_optim")]
     #optimizer = utils.instantiate(registry.optimizer, model.hparams.optimizer, params)
     #del model.hparams.optimizer._name_
-    optimizer = AdamW(model.parameters(), lr=config.optimizer.lr, weight_decay=0.0)
+    optimizer = AdamW(model.parameters(), lr=config.optimizer.lr, weight_decay=1e-4)
     logger.info("Start training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
     #model, optimizer, train_dl, eval_dl, lr_scheduler = accelerator.prepare(
     #     model, optimizer, train_dl, eval_dl, lr_scheduler
