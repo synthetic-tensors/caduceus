@@ -40,7 +40,7 @@ def collate_fn(batch, mlm_probability=0.15, sep_token=1):
     seq_ids, seq_targets, expr_values, expr_targets = [], [], [], []
     for sample in batch:
         input_ids, input_vals, sgrna = sample['input_ids'], sample['input_vals'], sample['sgrna']
-        seq_id = torch.cat([sgrna, input_ids, sgrna.flip(0)])
+        seq_id = input_ids #torch.cat([sgrna, input_ids, sgrna.flip(0)])
         expr_value, expr_target = mlm_esp_getitem(
             input_vals,
             mlm_probability=1.0, #Makes them all mask tokens
@@ -70,7 +70,7 @@ def main(config: OmegaConf):
         set_seed(42) #config.train.seed)
     model_config = ESPConfig(**config.model.config)
     model = ESPForMaskedLM(model_config)
-
+    print("number of parameters in model:",sum(p.numel() for p in model.parameters())/10**6," Million")
     freeze_layers = config.model.config.freeze_n_layers
     if freeze_layers > 0:
         print(f"Freezing {freeze_layers} layers")
