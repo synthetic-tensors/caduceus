@@ -103,6 +103,7 @@ class BiMambaWrapper(nn.Module):
         )
         if bidirectional:
             if mamba_kwargs['context_parallel']:
+                print('Running Mamba in Context Parallel Mode')
                 world_size = dist.get_world_size()
                 rank = dist.get_rank()
                 # Create a new group with ranks in reverse order
@@ -484,6 +485,7 @@ class ESPForMaskedLM(ESPPreTrainedModel):
         loss_weights: Optional[torch.FloatTensor] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        **kwargs
     ) -> Union[Tuple, MaskedLMOutput]:
         """HF-compatible forward method."""
 

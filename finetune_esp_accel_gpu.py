@@ -4,6 +4,7 @@ from tqdm.auto import tqdm
 from functools import partial
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from torchmetrics.functional.regression import pearson_corrcoef
 from torchmetrics.regression import PearsonCorrCoef
 #from utils.training import count_parameters #, move_to
@@ -11,6 +12,7 @@ import hydra
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from torch.utils.data.dataloader import DataLoader
+import torch.nn.functional as F
 from torch.optim import AdamW
 import os
 #from src.dataloaders import SequenceDataset  # TODO make registry
@@ -54,6 +56,35 @@ def collate_fn(batch, mlm_probability=0.15, sep_token=1):
             'value_labels': torch.cat(expr_targets)}
     # corresponding model inputs are (input_ids, values, labels, value_labels)
 
+def collate_fn_sg(batch, mlm_probability=0.15, max_len=4096, sep_token=1, pad_token=4):
+    seq_ids, seq_targets, expr_values, expr_targets = [], [], [], []
+    #max_seq_len = max([len(x['input_ids']) for x in batch])
+    ctrls=[]
+    for sample in batch:
+        input_ids, input_vals, ctrl = sample['input_ids'], sample['input_vals'], sample['ctrl']
+        input_ids = input_ids[-max_len:]
+        pad = nn.ConstantPad1d([0,max_len - len(input_ids)],pad_token)
+        
+        seq_id = pad(input_ids)
+        #expr_value, expr_target = mlm_esp_getitem(
+        #    input_vals,
+        #    mlm_probability=1.0, #Makes them all mask tokens
+        #)
+        #if not expr_value or not 
+        expr_value, expr_target = torch.Tensor([-100]), input_vals.unsqueeze(0)
+        ctrl = ctrl.unsqueeze(0)
+        #print(expr_value, expr_target)
+        seq_ids.append(seq_id)
+        ctrls.append(ctrl)
+        expr_values.append(expr_value)
+        expr_targets.append(expr_target)
+    return {'input_ids': torch.stack(seq_ids), \
+            'values': torch.cat(expr_values), \
+            'labels': None, \
+            'ctrl': torch.cat(ctrls), \
+            'value_labels': torch.cat(expr_targets)}
+    # corresponding model inputs are (input_ids, values, labels, value_labels)
+
 @hydra.main(config_path="configs", config_name="config.yaml")
 def main(config: OmegaConf):
     #from accelerate import DistributedDataParallelKwargs
@@ -62,7 +93,7 @@ def main(config: OmegaConf):
     accelerator = Accelerator(log_with="wandb")
     device = accelerator.device
     pcc = PearsonCorrCoef().to(device)
-
+    pcc_ctrl = PearsonCorrCoef().to(device)
     config = utils.train.process_config(config)
     utils.train.print_config(config, resolve=True)
 
@@ -89,16 +120,21 @@ def main(config: OmegaConf):
     #    **config.dataset
     #)
     local_rank = dist.get_rank()
-    dataset = datasets.load_from_disk(os.path.join(config.dataset.path,f'gpu_{local_rank}')).with_format('torch')
+    #dataset = datasets.load_from_disk(os.path.join(config.dataset.path,f'gpu_{local_rank}')).with_format('torch')
+    dataset = datasets.load_from_disk(config.dataset.path).with_format('torch')
     dataset = dataset.map(partial(clip_min_max_norm, lower_lim=config.dataset.lower_lim, upper_lim=config.dataset.upper_lim),num_proc=8)
     print(dataset[0]['input_vals'])
     dataset = dataset.train_test_split(0.1)
+    if config.single_gene:
+        _collate_fn = collate_fn_sg
+    else:
+        _collate_fn = collate_fn
     train_dl = DataLoader(
                 dataset['train'],
                 batch_size=config.dataset.batch_size,
                 shuffle=False,
                 #sampler=sampler,
-                collate_fn=collate_fn,
+                collate_fn=_collate_fn, #collate_fn,
                 #**kwargs,
                 num_workers=8,
                 prefetch_factor=8,
@@ -108,7 +144,7 @@ def main(config: OmegaConf):
                 batch_size=2*config.dataset.batch_size,
                 shuffle=False,
                 #sampler=sampler,
-                collate_fn = collate_fn,
+                collate_fn = _collate_fn,
                 num_workers=8,
                 prefetch_factor=8,
                 #**kwargs,
@@ -144,7 +180,8 @@ def main(config: OmegaConf):
     #     model, optimizer, train_dl, eval_dl, lr_scheduler
     #     )
 
-    model, optimizer = accelerator.prepare(model, optimizer)
+    #model, optimizer = accelerator.prepare(model, optimizer)
+    model, optimizer, train_dl, val_dl = accelerator.prepare(model, optimizer, train_dl, val_dl)
     if accelerator.is_main_process:
         progress_bar = tqdm(range(num_training_steps), initial = 0 * len(train_dl))
 
@@ -158,6 +195,7 @@ def main(config: OmegaConf):
         model.train()
         acc_loss, acc_mlm_loss, acc_value_loss = 0.0, 0.0, 0.0
         for batch_idx, batch in tqdm(enumerate(train_dl)):
+            break
             # Training
             if dist.get_world_size() > 1:
                 output = model(**batch, return_dict=True)
@@ -176,7 +214,8 @@ def main(config: OmegaConf):
                 optimizer.step()
                 # lr_scheduler.step()
                 if accelerator.is_main_process:
-                    progress_bar.update(accumulation_steps)
+                    #progress_bar.update(accumulation_steps)
+                    progress_bar.update(8)
                     accelerator.log(
                         {'loss': acc_loss / accumulation_steps, 'mlm_loss': acc_mlm_loss / accumulation_steps,
                          'value_loss': acc_value_loss / accumulation_steps, 'grad_norm': get_grad_norm(model),
@@ -187,19 +226,23 @@ def main(config: OmegaConf):
         model.eval()
         with torch.no_grad():
             total_val_loss=[]
-            all_logits, all_labels = [], []
+            all_logits, all_labels, ctrls = [], [], []
             for batch_idx, batch in tqdm(enumerate(val_dl)):
                 loss, mlm_loss, value_loss, value_logits, value_labels = model(**batch, return_dict=True)
                 total_val_loss.append(loss)
                 if save_preds:
                     all_logits.append(value_logits.cpu())
                     all_labels.append(value_labels.cpu())
+                    ctrls.append(batch['ctrl'].cpu())
                 accelerator.log({'val_loss': loss})
+                pcc_ctrl.update(batch['ctrl']/4.0-F.sigmoid(value_logits), batch['ctrl']/4.0-value_labels)
                 pcc.update(value_logits,value_labels)  
             torch.save(all_logits,os.path.join(f'val_preds_{str(epoch)}_gpu{dist.get_rank()}_logits.pt'))
             torch.save(all_labels,os.path.join(f'val_labels_{str(epoch)}_gpu{dist.get_rank()}_labels.pt'))
-            accelerator.log({'val_epoch_loss': sum(total_val_loss)/len(val_dl), 'val_epoch_pcc': pcc.compute().cpu()})
+            torch.save(ctrls, os.path.join(f'val_ctrls_{str(epoch)}_gpu{dist.get_rank()}_ctrls.pt'))
+            accelerator.log({'val_epoch_loss': sum(total_val_loss)/len(val_dl), 'val_epoch_pcc': pcc.compute().cpu(), 'val_epoch_pcc_ctrl': pcc_ctrl.compute().cpu()})
             pcc.reset()
+            pcc_ctrl.reset()
 
 
     logger.info("End training: {}".format(strftime("%Y-%m-%d %H:%M:%S", gmtime())))
