@@ -39,20 +39,22 @@ def clip_min_max_norm(example, upper_lim=10, lower_lim=-5):
     return example
 
 def collate_fn(batch, mlm_probability=0.15, sep_token=1):
-    seq_ids, seq_targets, expr_values, expr_targets = [], [], [], []
+    seq_ids, seq_targets, expr_values, expr_targets, ctrls = [], [], [], [], []
     for sample in batch:
-        input_ids, input_vals, sgrna = sample['input_ids'], sample['input_vals'], sample['sgrna']
+        input_ids, input_vals, ctrl = sample['input_ids'], sample['input_vals'], sample['ctrl']
         seq_id = input_ids #torch.cat([sgrna, input_ids, sgrna.flip(0)])
         expr_value, expr_target = mlm_esp_getitem(
             input_vals,
             mlm_probability=1.0, #Makes them all mask tokens
         )
+        ctrls.append(ctrl)
         seq_ids.append(seq_id)
         expr_values.append(expr_value)
         expr_targets.append(expr_target)
     return {'input_ids': torch.stack(seq_ids), \
             'values': torch.cat(expr_values), \
             'labels': None, \
+            'ctrl':torch.cat(ctrls), \
             'value_labels': torch.cat(expr_targets)}
     # corresponding model inputs are (input_ids, values, labels, value_labels)
 
@@ -120,11 +122,13 @@ def main(config: OmegaConf):
     #    **config.dataset
     #)
     local_rank = dist.get_rank()
-    #dataset = datasets.load_from_disk(os.path.join(config.dataset.path,f'gpu_{local_rank}')).with_format('torch')
-    dataset = datasets.load_from_disk(config.dataset.path).with_format('torch')
+    if config.single_gene:
+        dataset = datasets.load_from_disk(config.dataset.path).with_format('torch')
+    else:
+        dataset = datasets.load_from_disk(os.path.join(config.dataset.path,f'gpu_{local_rank}')).with_format('torch')
     dataset = dataset.map(partial(clip_min_max_norm, lower_lim=config.dataset.lower_lim, upper_lim=config.dataset.upper_lim),num_proc=8)
-    print(dataset[0]['input_vals'])
-    dataset = dataset.train_test_split(0.1)
+    #print(dataset[0]['input_vals'])
+    #dataset = dataset.train_test_split(0.1)
     if config.single_gene:
         _collate_fn = collate_fn_sg
     else:
@@ -180,8 +184,10 @@ def main(config: OmegaConf):
     #     model, optimizer, train_dl, eval_dl, lr_scheduler
     #     )
 
-    #model, optimizer = accelerator.prepare(model, optimizer)
-    model, optimizer, train_dl, val_dl = accelerator.prepare(model, optimizer, train_dl, val_dl)
+    if not config.single_gene:
+        model, optimizer = accelerator.prepare(model, optimizer)
+    else:
+        model, optimizer, train_dl, val_dl = accelerator.prepare(model, optimizer, train_dl, val_dl)
     if accelerator.is_main_process:
         progress_bar = tqdm(range(num_training_steps), initial = 0 * len(train_dl))
 
@@ -195,8 +201,7 @@ def main(config: OmegaConf):
         model.train()
         acc_loss, acc_mlm_loss, acc_value_loss = 0.0, 0.0, 0.0
         for batch_idx, batch in tqdm(enumerate(train_dl)):
-            break
-            # Training
+            # Trainingi
             if dist.get_world_size() > 1:
                 output = model(**batch, return_dict=True)
                 loss, mlm_loss, value_loss, _, _ = output
@@ -214,8 +219,10 @@ def main(config: OmegaConf):
                 optimizer.step()
                 # lr_scheduler.step()
                 if accelerator.is_main_process:
-                    #progress_bar.update(accumulation_steps)
-                    progress_bar.update(8)
+                    if not config.single_gene:
+                        progress_bar.update(accumulation_steps)
+                    else:
+                        progress_bar.update(8)
                     accelerator.log(
                         {'loss': acc_loss / accumulation_steps, 'mlm_loss': acc_mlm_loss / accumulation_steps,
                          'value_loss': acc_value_loss / accumulation_steps, 'grad_norm': get_grad_norm(model),
@@ -235,7 +242,7 @@ def main(config: OmegaConf):
                     all_labels.append(value_labels.cpu())
                     ctrls.append(batch['ctrl'].cpu())
                 accelerator.log({'val_loss': loss})
-                pcc_ctrl.update(batch['ctrl']/4.0-F.sigmoid(value_logits), batch['ctrl']/4.0-value_labels)
+                pcc_ctrl.update(batch['ctrl'].to(device)/4.0-F.sigmoid(value_logits), batch['ctrl'].to(device)/4.0-value_labels)
                 pcc.update(value_logits,value_labels)  
             torch.save(all_logits,os.path.join(f'val_preds_{str(epoch)}_gpu{dist.get_rank()}_logits.pt'))
             torch.save(all_labels,os.path.join(f'val_labels_{str(epoch)}_gpu{dist.get_rank()}_labels.pt'))
